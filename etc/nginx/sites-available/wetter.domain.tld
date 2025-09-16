@@ -4,7 +4,7 @@ proxy_cache_path /var/cache/nginx/dwd levels=1:2 keys_zone=dwdcache:10m inactive
 server {
     listen 80;
     listen [::]:80;
-    server_name wetter.larsmueller.net;
+    server_name wetter.domain.tld;
     return 301 https://$host$request_uri;
 }
 
@@ -13,15 +13,15 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     http2 on;
-    server_name wetter.larsmueller.net;
+    server_name wetter.domain.tld;
 
     root /var/www/wetterradar;
     index index.html;
      
 
     # --- Zertifikate (werden nach certbot-Befehl gesetzt/aktualisiert) ---
-    ssl_certificate     /etc/letsencrypt/live/wetter.larsmueller.net/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/wetter.larsmueller.net/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/wetter.domain.tld/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/wetter.domain.tld/privkey.pem;
 
     # --- Security ---
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
