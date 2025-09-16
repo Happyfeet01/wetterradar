@@ -25,3 +25,17 @@ Interaktive Wetterkarte mit Radar- und Satellitenanimation, Wind-Partikelfeld un
 
 ## Verzeichnis­struktur
 
+├─ index.html
+├─ css/
+├─ js/
+│ ├─ app.js # Bootstrapping, Konfiguration, Wiring der Module
+│ ├─ map.js # Leaflet-Karte (OSM)
+│ ├─ radar.js # RainViewer Radar + Animation/Timeline
+│ ├─ clouds.js # IR-Satellit (RainViewer), Zeitsync + Throttle
+│ ├─ wind_particles.js # leaflet-velocity + Open-Meteo-Sampling
+│ ├─ warnings.js # DWD JSON-Liste + CAP-Polygone als Overlays
+│ └─ utils.js # Helfer (Fetch/Proxy, DOM, Formatierungen, Legend)
+├─ etc/nginx/sites-available/ # Beispiel-Nginx-Config (optional)
+├─ blitz-proxy.js # Mini-Proxy-Script (optional)
+├─ package.json
+└─ README.md
