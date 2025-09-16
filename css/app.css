@@ -1,0 +1,92 @@
+:root{
+  --bg-panel: rgba(255,255,255,0.95);
+  --fg-text:#222; --fg-hint:#666;
+}
+body.dark{
+  --bg-panel: rgba(20,20,20,0.9);
+  --fg-text:#eee; --fg-hint:#aaa;
+  background:#000; color:var(--fg-text);
+}
+html,body,#map{height:100%;margin:0}
+
+/* Panel unten links */
+.panel{
+  position:absolute;
+  left:max(10px,env(safe-area-inset-left));
+  bottom:max(10px,env(safe-area-inset-bottom));
+  z-index:1000;
+  background:var(--bg-panel); color:var(--fg-text);
+  padding:10px 12px; border-radius:8px;
+  box-shadow:0 2px 10px rgba(0,0,0,.12);
+  font:14px/1.35 system-ui,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;
+  max-width:min(92vw,560px);
+  display:grid; gap:8px;
+}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.row label{white-space:nowrap;font-weight:600}
+.grow{flex:1 1 auto}
+.hint{font-size:12px;color:var(--fg-hint)}
+.badge{display:inline-block;padding:2px 6px;border-radius:6px;font-size:12px;background:#eef;color:#223}
+
+/* Legende oben rechts */
+.legend{
+  position:absolute;
+  right:max(10px,env(safe-area-inset-right));
+  top:max(10px,env(safe-area-inset-top));
+  z-index:1001;
+  background:var(--bg-panel); color:var(--fg-text);
+  padding:6px 8px; border-radius:6px; font:12px system-ui;
+  pointer-events:none;
+}
+.legend .scale{
+  width:180px;height:12px;margin:2px 0;
+  background:linear-gradient(to right,#00f,#0ff,#0f0,#ff0,#f90,#f00);
+  border:1px solid rgba(0,0,0,.25);
+}
+.legend .ticks{display:flex;justify-content:space-between;color:var(--fg-hint)}
+
+/* Blitz-Zähler rechts oben unter Legende */
+.lightning-counter{
+  position:absolute;
+  right:max(10px,env(safe-area-inset-right));
+  top:calc(10px + 60px);
+  z-index:1001;
+  background:var(--bg-panel); color:var(--fg-text);
+  padding:4px 8px; border-radius:6px; font:12px system-ui;
+  box-shadow:0 1px 6px rgba(0,0,0,.08); pointer-events:none;
+}
+
+/* Warnliste rechts oben (unter Counter/Legende) */
+.warnlist{
+  position:absolute;
+  right:max(10px,env(safe-area-inset-right));
+  top:calc(10px + 60px + 28px + 8px);
+  z-index:1001;
+  background:var(--bg-panel); color:var(--fg-text);
+  padding:8px 10px; border-radius:8px;
+  max-width:min(48vw,420px); max-height:40vh; overflow:auto;
+  font:13px system-ui;
+}
+.warnlist .title{font-weight:600;margin-bottom:6px}
+.warn-card{border-left:6px solid #ddd; padding:6px 8px; margin:6px 0; background:rgba(0,0,0,0.03); border-radius:6px}
+
+/* Banner oben mittig */
+.banner{
+  position:absolute; left:50%; transform:translateX(-50%);
+  top:max(10px,env(safe-area-inset-top));
+  z-index:1100;
+  background:var(--bg-panel); color:var(--fg-text);
+  padding:6px 10px; border-radius:8px; font:13px system-ui;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+  display:none;
+}
+
+/* Footer (klein, oben links) – optional */
+.footer{
+  position:absolute; left:10px; top:10px; z-index:900;
+  background:var(--bg-panel); color:var(--fg-text);
+  padding:6px 8px; border-radius:6px; font:12px system-ui;
+}
+
+/* Radar-Frames weich überblenden */
+.rv-tiles{transition:opacity .28s linear; will-change:opacity}

@@ -1,0 +1,123 @@
+proxy_cache_path /var/cache/nginx/dwd levels=1:2 keys_zone=dwdcache:10m inactive=10m max_size=100m;
+
+# HTTP → HTTPS Weiterleitung (v4/v6)
+server {
+    listen 80;
+    listen [::]:80;
+    server_name wetter.larsmueller.net;
+    return 301 https://$host$request_uri;
+}
+
+# HTTPS vHost
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name wetter.larsmueller.net;
+
+    root /var/www/wetterradar;
+    index index.html;
+     
+
+    # --- Zertifikate (werden nach certbot-Befehl gesetzt/aktualisiert) ---
+    ssl_certificate     /etc/letsencrypt/live/wetter.larsmueller.net/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/wetter.larsmueller.net/privkey.pem;
+
+    # --- Security ---
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Content Security Policy: erlaub Leaflet + OSM + RainViewer + unpkg
+    add_header Content-Security-Policy "
+      default-src 'self';
+      img-src 'self' data: https://tilecache.rainviewer.com https://*.tile.openstreetmap.org;
+      script-src 'self' https://unpkg.com https://cdn.jsdelivr.net;
+      style-src 'self' 'unsafe-inline' https://unpkg.com;
+      connect-src 'self' https://api.rainviewer.com https://api.open-meteo.com https://nominatim.openstreetmap.org;
+      font-src 'self' data:;
+      child-src 'none'; frame-ancestors 'self';
+    " always;
+    # --- Gzip für Text ---
+    gzip on;
+    gzip_comp_level 5;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+
+    # --- DWD Warnungen ---
+
+    location = /dwd/warnings.json {
+      proxy_pass https://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json;
+      proxy_set_header Host www.dwd.de;
+      proxy_ssl_server_name on;
+      proxy_set_header User-Agent "Mozilla/5.0";
+      proxy_set_header Accept-Encoding "";   # ungezippt
+
+      proxy_buffering on;
+      proxy_cache dwdcache;
+      proxy_cache_valid 200 5m;
+      proxy_cache_valid any 1m;
+
+      proxy_hide_header Content-Security-Policy;
+      proxy_hide_header Content-Type;
+      add_header Content-Type application/javascript always;  # JSONP!
+      add_header Access-Control-Allow-Origin *;
+  }
+
+    # --- Caching ---
+    location = /index.html {
+        etag on;
+        add_header Cache-Control "no-cache";
+    }
+
+    # statische Assets (Leaflet via CDN bleibt extern gecacht)
+    location ~* \.(?:css|js)$ {
+        etag on;
+        add_header Cache-Control "public, max-age=604800, immutable";
+    }
+
+    location ~* \.(?:png|jpg|jpeg|gif|webp|ico|svg)$ {
+        etag on;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+    }
+
+    # ACME-Challenge (für Certbot Webroot)
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/wetter;
+        allow all;
+        default_type "text/plain";
+    }
+
+    # Fallback auf index.html (Single-File-App)
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # im Server-Block von wetter.larsmueller.net
+    location /blitze {
+        proxy_pass http://127.0.0.1:9043/blitze;
+
+        # SSE-Essentials
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        add_header X-Accel-Buffering no;
+
+        # CSP HIER explizit unterdrücken (leerer Wert) – wichtig bei HTTP/2
+        add_header Content-Security-Policy "" always;
+    }
+    location /blitze/status {
+        proxy_pass http://127.0.0.1:9043/blitze/status;
+    }
+    location /blitze/debug {
+        allow 127.0.0.1; deny all;  # optional absichern
+        proxy_pass http://127.0.0.1:9043/blitze/debug;
+    }
+
+    access_log /var/log/nginx/wetter.access.log;
+    error_log  /var/log/nginx/wetter.error.log warn;
+}
