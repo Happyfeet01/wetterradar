@@ -82,6 +82,16 @@ server {
         add_header Cache-Control "public, max-age=2592000, immutable";
     }
 
+    # --- Windströmungsdaten (leaflet-velocity) ---
+    # Erwartet JSON-Dateien unter /var/www/wetterradar/data/wind/
+    location ^~ /wind/ {
+        root /var/www/wetterradar/data;
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+        add_header Cache-Control "public, max-age=120, stale-while-revalidate=600";
+        try_files $uri =404;
+    }
+
     # ACME-Challenge (für Certbot Webroot)
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/wetter;
