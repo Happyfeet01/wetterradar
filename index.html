@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <title>Wetterradar – Radar, Wolken, Blitze, Warnungen</title>
+  <title>Wetterradar – Radar, Wolken, Wind, Warnungen</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/css/app.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -12,55 +12,61 @@
   <div id="map" role="region" aria-label="Wetterradar"></div>
 
   <!-- Panel unten links -->
-  <div class="panel">
-    <div class="row">
-      <button id="btnPrev">⟵</button>
-      <button id="btnPlay">▶︎</button>
-      <button id="btnNext">⟶</button>
-      <div class="grow" id="lblTime">Lade…</div>
-      <button id="btnLocate">📍</button>
-      <span id="lblCity" class="badge" style="display:none"></span>
+  <div class="panel" id="controlPanel">
+    <div class="panel-header">
+      <strong>Steuerung</strong>
+      <button id="btnPanelToggle" class="panel-toggle" aria-expanded="true" aria-label="Bedienpanel einklappen">▾</button>
     </div>
-    <div class="row">
-      <label for="selColor">Farbschema</label>
-      <select id="selColor">
-        <option value="4" selected>4</option>
-        <option value="3">3</option>
-        <option value="2">2</option>
-      </select>
-      <label for="chkSmooth">Smooth</label>
-      <input type="checkbox" id="chkSmooth" checked>
-      <label for="rngSpeed">⏩</label>
-      <input id="rngSpeed" type="range" min="200" max="1200" step="100" value="700" class="grow">
-    </div>
-    <div class="row">
-      <label for="rngOpacity">Deckkraft Radar</label>
-      <input id="rngOpacity" type="range" min="0.2" max="1" step="0.05" value="0.85" class="grow">
-      <span id="lblOpacity">85%</span>
-    </div>
-    <div class="row">
-      <label for="chkClouds">Wolken</label>
-      <input type="checkbox" id="chkClouds">
-      <input id="rngClouds" type="range" min="0.2" max="1" step="0.05" value="0.7" class="grow">
-      <span id="lblClouds">70%</span>
-    </div>
-    <div class="row">
-      <label for="chkLightning">Blitze (live)</label>
-      <input type="checkbox" id="chkLightning" checked>
-      <span class="hint">letzte 10 Min im Sichtbereich</span>
-    </div>
-    <div class="row">
-      <label for="chkWarn">Wetterwarnungen (DWD)</label>
-      <input type="checkbox" id="chkWarn">
-      <label for="chkWarnList">Warnliste</label>
-      <input type="checkbox" id="chkWarnList">
-      <label for="chkWarnInView">nur im Kartenausschnitt</label>
-      <input type="checkbox" id="chkWarnInView" checked>
-    </div>
+    <div class="panel-body" id="panelBody">
+      <div class="row">
+        <button id="btnPrev">⟵</button>
+        <button id="btnPlay">▶︎</button>
+        <button id="btnNext">⟶</button>
+        <div class="grow" id="lblTime">Lade…</div>
+        <button id="btnLocate">📍</button>
+        <span id="lblLocationWind" class="badge" style="display:none"></span>
+      </div>
+      <div class="row">
+        <label for="selColor">Farbschema</label>
+        <select id="selColor">
+          <option value="4" selected>4</option>
+          <option value="3">3</option>
+          <option value="2">2</option>
+        </select>
+        <label for="chkSmooth">Smooth</label>
+        <input type="checkbox" id="chkSmooth" checked>
+        <label for="rngSpeed">⏩</label>
+        <input id="rngSpeed" type="range" min="200" max="1200" step="100" value="700" class="grow">
+      </div>
+      <div class="row">
+        <label for="rngOpacity">Deckkraft Radar</label>
+        <input id="rngOpacity" type="range" min="0.2" max="1" step="0.05" value="0.85" class="grow">
+        <span id="lblOpacity">85%</span>
+      </div>
+      <div class="row">
+        <label for="chkClouds">Wolken</label>
+        <input type="checkbox" id="chkClouds">
+        <input id="rngClouds" type="range" min="0.2" max="1" step="0.05" value="0.7" class="grow">
+        <span id="lblClouds">70%</span>
+      </div>
+      <div class="row">
+        <label for="chkWindFlow">Windströmung</label>
+        <input type="checkbox" id="chkWindFlow">
+        <span class="hint">animiertes Feld (experimentell)</span>
+      </div>
+      <div class="row">
+        <label for="chkWarn">Wetterwarnungen (DWD)</label>
+        <input type="checkbox" id="chkWarn">
+        <label for="chkWarnList">Warnliste</label>
+        <input type="checkbox" id="chkWarnList">
+        <label for="chkWarnInView">nur im Kartenausschnitt</label>
+        <input type="checkbox" id="chkWarnInView" checked>
+      </div>
 
-    <div class="row">
-      <label for="chkDark">Dark-Mode</label>
-      <input type="checkbox" id="chkDark">
+      <div class="row">
+        <label for="chkDark">Dark-Mode</label>
+        <input type="checkbox" id="chkDark">
+      </div>
     </div>
   </div>
 
@@ -70,8 +76,6 @@
     <div class="scale"></div>
     <div class="ticks"><span>Leicht</span><span>Mittel</span><span>Stark</span></div>
   </div>
-
-  <div id="lightningCounter" class="lightning-counter">⚡ Blitze im Sichtbereich: 0 (10 min)</div>
 
   <div id="warnList" class="warnlist" style="display:none;">
     <div class="title">Aktuelle Wetterwarnungen (DWD)</div>
@@ -85,6 +89,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin></script>
+  <script src="https://unpkg.com/leaflet-velocity/dist/leaflet-velocity.min.js"></script>
   <script type="module" src="/js/app.js"></script>
 </body>
 </html>

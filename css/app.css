@@ -20,13 +20,31 @@ html,body,#map{height:100%;margin:0}
   box-shadow:0 2px 10px rgba(0,0,0,.12);
   font:14px/1.35 system-ui,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;
   max-width:min(92vw,560px);
-  display:grid; gap:8px;
+  display:flex; flex-direction:column; gap:8px;
 }
+.panel.collapsed{gap:0;}
+.panel-header{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.panel-header strong{font-size:14px;letter-spacing:0.01em;}
+.panel-body{display:grid;gap:8px;}
+.panel.collapsed .panel-body{display:none;}
+.panel.collapsed .panel-toggle{transform:rotate(-90deg);}
+.panel-toggle{
+  border:none; border-radius:6px;
+  background:rgba(0,0,0,0.08);
+  color:inherit;
+  padding:4px 8px;
+  font-size:14px;
+  cursor:pointer;
+  transition:transform .2s ease;
+}
+.panel-toggle:focus-visible{outline:2px solid #1976d2; outline-offset:2px;}
+body.dark .panel-toggle{background:rgba(255,255,255,0.12);}
 .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .row label{white-space:nowrap;font-weight:600}
 .grow{flex:1 1 auto}
 .hint{font-size:12px;color:var(--fg-hint)}
 .badge{display:inline-block;padding:2px 6px;border-radius:6px;font-size:12px;background:#eef;color:#223}
+body.dark .badge{background:rgba(33,150,243,0.35);color:#e3f2fd;}
 
 /* Legende oben rechts */
 .legend{
@@ -45,22 +63,11 @@ html,body,#map{height:100%;margin:0}
 }
 .legend .ticks{display:flex;justify-content:space-between;color:var(--fg-hint)}
 
-/* Blitz-Zähler rechts oben unter Legende */
-.lightning-counter{
-  position:absolute;
-  right:max(10px,env(safe-area-inset-right));
-  top:calc(10px + 60px);
-  z-index:1001;
-  background:var(--bg-panel); color:var(--fg-text);
-  padding:4px 8px; border-radius:6px; font:12px system-ui;
-  box-shadow:0 1px 6px rgba(0,0,0,.08); pointer-events:none;
-}
-
 /* Warnliste rechts oben (unter Counter/Legende) */
 .warnlist{
   position:absolute;
   right:max(10px,env(safe-area-inset-right));
-  top:calc(10px + 60px + 28px + 8px);
+  top:calc(10px + 60px + 8px);
   z-index:1001;
   background:var(--bg-panel); color:var(--fg-text);
   padding:8px 10px; border-radius:8px;
@@ -90,3 +97,40 @@ html,body,#map{height:100%;margin:0}
 
 /* Radar-Frames weich überblenden */
 .rv-tiles{transition:opacity .28s linear; will-change:opacity}
+
+/* Standort-Markierung */
+.loc-icon{display:flex;align-items:center;justify-content:center;}
+.loc-marker{
+  width:32px; height:32px;
+  border-radius:50%;
+  border:3px solid #0d47a1;
+  background:radial-gradient(circle at 50% 50%, #fff 0%, #64b5f6 45%, #1976d2 100%);
+  position:relative;
+  box-shadow:0 0 10px rgba(33,150,243,0.45);
+}
+.loc-marker::after{
+  content:"";
+  position:absolute;
+  top:50%; left:50%; transform:translate(-50%,-50%);
+  width:10px; height:10px;
+  background:#fff; border-radius:50%;
+  box-shadow:0 0 4px rgba(0,0,0,0.2);
+}
+.loc-pointer{
+  position:absolute;
+  top:-12px; left:50%;
+  width:6px; height:18px;
+  background:#0d47a1;
+  border-radius:3px 3px 0 0;
+  transform-origin:50% 16px;
+  transform:translateX(-50%) rotate(var(--rot,0deg));
+  box-shadow:0 2px 4px rgba(0,0,0,0.2);
+}
+
+.leaflet-tooltip.wind-tooltip{
+  background:rgba(25,118,210,0.9);
+  border:none;
+  color:#fff;
+  font-weight:600;
+  box-shadow:0 2px 6px rgba(0,0,0,0.25);
+}
