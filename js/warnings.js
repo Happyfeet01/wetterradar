@@ -98,21 +98,24 @@ export function bind(L, map, ui){
 
   // --- WFS: Warnflächen im aktuellen Kartenausschnitt (BBox) ---
   async function fetchWarnAreasInView(){
-    // BBox in EPSG:3857 ermitteln
+    // BBox in EPSG:4326 ermitteln (Leaflet liefert Bounds bereits als WGS84)
     const b = map.getBounds();
-    const sw = map.options.crs.project(L.latLng(b.getSouth(), b.getWest()));
-    const ne = map.options.crs.project(L.latLng(b.getNorth(), b.getEast()));
-    const bbox = `${sw.x},${sw.y},${ne.x},${ne.y},EPSG:3857`;
-    const url = `${DWD_WFS}&bbox=${bbox}`;
+    const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()},EPSG:4326`;
+    const url = `${DWD_WFS}&bbox=${bbox}&srsName=EPSG:4326`;
 
     const res = await fetch(url, { cache:'no-store' });
     if (!res.ok) throw new Error('WFS BBOX failed: ' + res.status);
     const geo = await res.json();
+    const features = Array.isArray(geo?.features) ? geo.features : [];
+    if (!features.length){
+      console.error('WFS BBOX returned no features for bbox:', bbox);
+      return { names: new Set(), ids: new Set(), featureCount: 0, bbox };
+    }
 
     // Kandidaten für Regionsbezeichner/IDs sammeln
     const names = new Set();
     const ids   = new Set();
-    for (const f of geo.features || []) {
+    for (const f of features) {
       const p = f.properties || {};
       ['regionName','NAME','GEN','KREIS','KREIS_NAME','KREISNAME','AREADESC'].forEach(k=>{
         if (typeof p[k] === 'string' && p[k].trim()) names.add(p[k].trim());
@@ -122,7 +125,7 @@ export function bind(L, map, ui){
         if (v !== undefined && v !== null && String(v).trim()) ids.add(String(v).trim());
       });
     }
-    return { names, ids };
+    return { names, ids, featureCount: features.length, bbox };
   }
 
   // --- Banner nur aktualisieren (ohne Liste zu rendern) ---
@@ -149,13 +152,17 @@ export function bind(L, map, ui){
       const onlyView = document.getElementById('chkWarnInView')?.checked;
       if (onlyView){
         try{
-          const { names, ids } = await fetchWarnAreasInView();
-          if (names.size || ids.size){
+          const { names, ids, featureCount, bbox } = await fetchWarnAreasInView();
+          if (featureCount > 0 && (names.size || ids.size)){
             all = all.filter(w => {
               const rn  = (w.regionName || '').trim();
               const rid = String(w.regionId || w.regionID || w.region || w.warncellid || w.warncellID || '').trim();
               return (rn && names.has(rn)) || (rid && ids.has(rid));
             });
+          } else if (featureCount > 0){
+            console.warn('WFS features missing identifiers for bbox, skipping warning filter:', bbox);
+          } else {
+            console.error('No WFS features available to filter warnings for bbox:', bbox);
           }
         }catch(e){
           console.warn('WFS filter failed, falling back to unfiltered warnings:', e);
