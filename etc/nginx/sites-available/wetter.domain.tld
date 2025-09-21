@@ -83,9 +83,8 @@ server {
     }
 
     # --- Windströmungsdaten (leaflet-velocity) ---
-    # Erwartet JSON-Dateien unter /var/www/wetterradar/data/wind/
+    # Statische JSONs liegen direkt unter /var/www/wetterradar/wind/
     location ^~ /wind/ {
-        root /var/www/wetterradar/data;
         default_type application/json;
         add_header Access-Control-Allow-Origin *;
         add_header Cache-Control "public, max-age=120, stale-while-revalidate=600";
