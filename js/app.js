@@ -225,7 +225,13 @@ async function boot(){
   };
 
   // regelmäßige Aktualisierung
-  setInterval(async ()=>{ await Radar.loadRadar(); Radar.paint(L,map,ui,syncClouds); }, 5*60*1000);
+  setInterval(async ()=>{
+    await Promise.all([Radar.loadRadar(), Sat.loadSatellite()]);
+    const frames = Radar.getFrames();
+    const current = frames[Radar.getIndex()];
+    if(current) syncClouds(current.time);
+    Radar.paint(L,map,ui,syncClouds);
+  }, 5*60*1000);
 }
 
 boot();
