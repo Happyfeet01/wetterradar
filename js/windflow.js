@@ -28,14 +28,43 @@ export async function setWindFlow(L, map, enabled){
       if(typeof L.velocityLayer !== 'function'){
         throw new Error('leaflet-velocity nicht geladen');
       }
-      const data = await fetchWindField();
+      const payload = await fetchWindField();
+
+      const meta = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload.meta
+        : null;
+      const dataset = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload)
+          ? payload
+          : null;
+
+      if(!meta || typeof meta !== 'object' || !Array.isArray(dataset) || dataset.length === 0){
+        throw new Error('Ungültige Winddaten');
+      }
+
+      dataset.forEach((entry, idx)=>{
+        if(!entry || typeof entry !== 'object'){
+          throw new Error(`Ungültige Winddaten (Eintrag ${idx})`);
+        }
+        if(!entry.header || typeof entry.header !== 'object'){
+          throw new Error(`Ungültige Winddaten (Header ${idx})`);
+        }
+        if(!Array.isArray(entry.data)){
+          throw new Error(`Ungültige Winddaten (Daten ${idx})`);
+        }
+      });
+
+      const pluginPayload = payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray(payload.data)
+        ? payload
+        : { data: dataset };
       if(!map.getPane('windPane')){
         map.createPane('windPane');
         map.getPane('windPane').style.zIndex = 480;
       }
       const isMobile = /iphone|ipad|android|mobile/i.test(navigator.userAgent);
       layer = L.velocityLayer({
-        data,
+        data: pluginPayload,
         pane: 'windPane',
         velocityScale:0.008,
         maxVelocity:25,
