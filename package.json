@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "wind:once": "node wind-fetcher.js --once",
+    "wind:watch": "node wind-fetcher.js"
   },
   "keywords": [],
   "author": "",
@@ -13,5 +15,6 @@
     "@simonschick/blitzortungapi": "^4.0.1",
     "cors": "^2.8.5",
     "express": "^5.1.0"
-  }
+  },
+  "type": "module"
 }
