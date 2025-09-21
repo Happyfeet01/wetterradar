@@ -6,7 +6,7 @@ let lastMetaGenerated = null;
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
-async function fetchWindField(){
+async function fetchWindData(){
   let resp = await fetch('/wind/current.json', { cache:'no-store' });
   if(!resp.ok){
     resp = await fetch('/wind/wind.json', { cache:'no-store' });
@@ -50,6 +50,11 @@ function normalizePayload(payload){
   return { meta, pluginPayload };
 }
 
+function isMobileDevice(){
+  if(typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') return false;
+  return /iphone|ipad|android|mobile/i.test(navigator.userAgent);
+}
+
 function createVelocityLayer(L, pluginPayload, isMobile){
   return L.velocityLayer({
     data: pluginPayload,
@@ -67,6 +72,45 @@ function createVelocityLayer(L, pluginPayload, isMobile){
       directionString:'Richtung'
     }
   });
+}
+
+function cleanupWindLayerInstance(targetLayer, map){
+  if(!targetLayer) return;
+  if(targetLayer._windTimestampEl && typeof targetLayer._windTimestampEl.remove === 'function'){
+    targetLayer._windTimestampEl.remove();
+  }
+  targetLayer._windTimestampEl = null;
+  if(map && typeof map.hasLayer === 'function' && map.hasLayer(targetLayer)){
+    map.removeLayer(targetLayer);
+  }else if(typeof targetLayer.remove === 'function' && targetLayer._map){
+    targetLayer.remove();
+  }
+  if(targetLayer === layer){
+    layer = null;
+  }
+}
+
+function resolveVelocityLayer(L, map, pluginPayload){
+  const isMobile = isMobileDevice();
+  let nextLayer = layer;
+
+  if(nextLayer && typeof nextLayer.setData === 'function'){
+    nextLayer.setData(pluginPayload);
+  }else{
+    if(nextLayer){
+      cleanupWindLayerInstance(nextLayer, map);
+    }
+    nextLayer = createVelocityLayer(L, pluginPayload, isMobile);
+  }
+
+  if(nextLayer && nextLayer.options){
+    nextLayer.options.data = pluginPayload;
+    nextLayer.options.lineWidth = isMobile ? 0.8 : 1.0;
+    nextLayer.options.particleMultiplier = isMobile ? 1/350 : 1/200;
+  }
+
+  layer = nextLayer;
+  return nextLayer;
 }
 
 function formatGeneratedLabel(generated){
@@ -131,15 +175,25 @@ function applyMeta(meta){
   }
 }
 
-async function ensureWindLayer(L, map){
-  if(loading) return loading;
+async function ensureWindLayer(L, map, { forceFetch = false } = {}){
+  if(loading){
+    if(forceFetch){
+      try{
+        await loading;
+      }catch(err){
+        console.warn('Vorheriger Winddatenabruf fehlgeschlagen:', err);
+      }
+    }else{
+      return loading;
+    }
+  }
 
   loading = (async()=>{
     try{
       if(typeof L.velocityLayer !== 'function'){
         throw new Error('leaflet-velocity nicht geladen');
       }
-      const payload = await fetchWindField();
+      const payload = await fetchWindData();
       const { meta, pluginPayload } = normalizePayload(payload);
 
       if(!map.getPane('windPane')){
@@ -147,31 +201,14 @@ async function ensureWindLayer(L, map){
         map.getPane('windPane').style.zIndex = 480;
       }
 
-      const isMobile = /iphone|ipad|android|mobile/i.test(navigator.userAgent);
+      const nextLayer = resolveVelocityLayer(L, map, pluginPayload);
 
-      if(!layer){
-        layer = createVelocityLayer(L, pluginPayload, isMobile);
-      }else if(typeof layer.setData === 'function'){
-        layer.setData(pluginPayload);
-      }else{
-        if(map.hasLayer(layer)){
-          map.removeLayer(layer);
-        }
-        layer = createVelocityLayer(L, pluginPayload, isMobile);
-      }
-
-      if(layer && layer.options){
-        layer.options.data = pluginPayload;
-      }
-
-      if(layer && overlayEnabled && !map.hasLayer(layer)){
-        layer.addTo(map);
+      if(nextLayer && overlayEnabled && map && !map.hasLayer(nextLayer)){
+        nextLayer.addTo(map);
       }
 
       applyMeta(meta);
-      return layer;
-    }catch(err){
-      throw err;
+      return nextLayer;
     }finally{
       loading = null;
     }
@@ -216,17 +253,7 @@ export async function setWindFlow(L, map, enabled){
 
   overlayEnabled = true;
   try{
-    if(loading){
-      try{
-        await loading;
-      }catch(err){
-        console.warn('Vorheriger Winddatenabruf fehlgeschlagen:', err);
-      }
-    }
-    const result = await ensureWindLayer(L, map);
-    if(layer && overlayEnabled && !map.hasLayer(layer)){
-      layer.addTo(map);
-    }
+    const result = await ensureWindLayer(L, map, { forceFetch:true });
     if(result){
       scheduleAutoRefresh(L, map);
     }
