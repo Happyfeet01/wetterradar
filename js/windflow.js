@@ -1,93 +1,196 @@
-let layer = null;
-let loading = null;
+const WIND_DATA_URL = '/wind/current.json';
+const WIND_PANE_NAME = 'windPane';
 
-async function fetchWindField(){
-  let resp = await fetch('/wind/current.json', { cache:'no-store' });
-  if(!resp.ok){
-    resp = await fetch('/wind/wind.json', { cache:'no-store' });
+let velocityLayer = null;
+let loadPromise = null;
+let checkboxUpdating = false;
+
+function ensurePane(map) {
+  if (!map.getPane(WIND_PANE_NAME)) {
+    map.createPane(WIND_PANE_NAME);
+    const pane = map.getPane(WIND_PANE_NAME);
+    if (pane) {
+      pane.style.zIndex = '480';
+    }
   }
-  if(!resp.ok){
-    throw new Error('Winddaten nicht verfügbar');
-  }
-  return await resp.json();
 }
 
-export async function setWindFlow(L, map, enabled){
-  if(!enabled){
-    if(layer){ map.removeLayer(layer); }
+async function fetchWindData() {
+  const response = await fetch(WIND_DATA_URL, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function validateEntry(entry, index) {
+  if (!entry || typeof entry !== 'object') {
+    console.error(`Windströmung: Eintrag ${index} ist ungültig.`);
+    return false;
+  }
+  const header = entry.header;
+  const nx = header?.nx;
+  const ny = header?.ny;
+  if (!Number.isInteger(nx) || nx <= 0 || !Number.isInteger(ny) || ny <= 0) {
+    console.error(`Windströmung: Header von Eintrag ${index} enthält ungültige Dimensionen.`);
+    return false;
+  }
+  const values = entry.data;
+  const hasArrayBuffer = typeof ArrayBuffer !== 'undefined' && typeof ArrayBuffer.isView === 'function';
+  const isArrayLike = Array.isArray(values) || (hasArrayBuffer && ArrayBuffer.isView(values));
+  const length = isArrayLike ? values.length : 0;
+  if (!isArrayLike || length !== nx * ny) {
+    console.error(`Windströmung: Datenlänge in Eintrag ${index} entspricht nicht nx*ny.`);
+    return false;
+  }
+  return true;
+}
+
+function normalizePayload(raw) {
+  const dataset = Array.isArray(raw?.data)
+    ? raw.data
+    : Array.isArray(raw)
+      ? raw
+      : null;
+
+  if (!Array.isArray(dataset)) {
+    console.error('Windströmung: Unerwartetes Datenformat.');
     return null;
   }
-  if(layer){
-    layer.addTo(map);
-    return layer;
+
+  if (dataset.length < 2) {
+    console.error('Windströmung: Datensatz enthält weniger als zwei Komponenten.');
+    return null;
   }
-  if(loading) return loading;
 
-  loading = (async()=>{
-    try{
-      if(typeof L.velocityLayer !== 'function'){
-        throw new Error('leaflet-velocity nicht geladen');
-      }
-      const payload = await fetchWindField();
-
-      const meta = payload && typeof payload === 'object' && !Array.isArray(payload)
-        ? payload.meta
-        : null;
-      const dataset = Array.isArray(payload?.data)
-        ? payload.data
-        : Array.isArray(payload)
-          ? payload
-          : null;
-
-      if(!meta || typeof meta !== 'object' || !Array.isArray(dataset) || dataset.length === 0){
-        throw new Error('Ungültige Winddaten');
-      }
-
-      dataset.forEach((entry, idx)=>{
-        if(!entry || typeof entry !== 'object'){
-          throw new Error(`Ungültige Winddaten (Eintrag ${idx})`);
-        }
-        if(!entry.header || typeof entry.header !== 'object'){
-          throw new Error(`Ungültige Winddaten (Header ${idx})`);
-        }
-        if(!Array.isArray(entry.data)){
-          throw new Error(`Ungültige Winddaten (Daten ${idx})`);
-        }
-      });
-
-      const pluginPayload = payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray(payload.data)
-        ? payload
-        : { data: dataset };
-      if(!map.getPane('windPane')){
-        map.createPane('windPane');
-        map.getPane('windPane').style.zIndex = 480;
-      }
-      const isMobile = /iphone|ipad|android|mobile/i.test(navigator.userAgent);
-      layer = L.velocityLayer({
-        data: pluginPayload,
-        pane: 'windPane',
-        velocityScale:0.008,
-        maxVelocity:25,
-        lineWidth: isMobile ? 0.8 : 1.0,
-        particleMultiplier: isMobile ? 1/350 : 1/200,
-        displayValues:true,
-        displayOptions:{
-          position:'bottomleft',
-          emptyString:'Keine Winddaten',
-          velocityType:'Wind',
-          speedUnit:'m/s',
-          directionString:'Richtung'
-        }
-      });
-      layer.addTo(map);
-      return layer;
-    }catch(err){
-      layer = null;
-      throw err;
-    }finally{
-      loading = null;
+  for (let i = 0; i < dataset.length; i += 1) {
+    if (!validateEntry(dataset[i], i)) {
+      return null;
     }
-  })();
+  }
 
-  return loading;
+  if (Array.isArray(raw?.data) && raw && typeof raw === 'object') {
+    return { ...raw, data: dataset };
+  }
+
+  return { data: dataset };
+}
+
+function createVelocityLayer(L, payload) {
+  if (typeof L.velocityLayer !== 'function') {
+    console.error('Windströmung: leaflet-velocity ist nicht verfügbar.');
+    return null;
+  }
+
+  return L.velocityLayer({
+    data: payload,
+    pane: WIND_PANE_NAME,
+    maxVelocity: 25,
+    velocityScale: 0.008,
+    particleAge: 60,
+    particleMultiplier: 0.012,
+    lineWidth: 1.2,
+    frameRate: 20,
+    displayValues: true,
+    displayOptions: {
+      velocityType: '10m Wind',
+      position: 'bottomleft',
+      speedUnit: 'm/s',
+    },
+  });
+}
+
+async function ensureLayer(L, map) {
+  if (velocityLayer) {
+    return velocityLayer;
+  }
+
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      try {
+        const raw = await fetchWindData();
+        const payload = normalizePayload(raw);
+        if (!payload) {
+          return null;
+        }
+        ensurePane(map);
+        velocityLayer = createVelocityLayer(L, payload);
+        return velocityLayer;
+      } catch (error) {
+        throw error;
+      }
+    })().finally(() => {
+      loadPromise = null;
+    });
+  }
+
+  return loadPromise;
+}
+
+function setCheckboxChecked(checkbox, checked) {
+  if (!checkbox) {
+    return;
+  }
+  checkboxUpdating = true;
+  checkbox.checked = checked;
+  checkboxUpdating = false;
+}
+
+function removeLayer(map) {
+  if (velocityLayer && map.hasLayer(velocityLayer)) {
+    map.removeLayer(velocityLayer);
+  }
+}
+
+export function bindWindFlow(L, map, ui) {
+  const checkbox = ui?.chkWindFlow;
+  if (!checkbox) {
+    return;
+  }
+
+  const hintElement = checkbox.closest('.row')?.querySelector('.hint');
+  const originalHint = hintElement?.textContent ?? '';
+
+  const setHint = (text) => {
+    if (hintElement) {
+      hintElement.textContent = text;
+    }
+  };
+
+  checkbox.addEventListener('change', async () => {
+    if (checkboxUpdating) {
+      return;
+    }
+
+    if (!checkbox.checked) {
+      removeLayer(map);
+      setHint(originalHint);
+      return;
+    }
+
+    checkbox.disabled = true;
+    setHint('lädt…');
+    try {
+      const layer = await ensureLayer(L, map);
+      if (!layer) {
+        console.error('Windströmung: Ungültige Daten erhalten.');
+        removeLayer(map);
+        setCheckboxChecked(checkbox, false);
+        return;
+      }
+      if (!map.hasLayer(layer)) {
+        layer.addTo(map);
+      }
+      setHint(originalHint);
+    } catch (error) {
+      console.error('Windströmung konnte nicht geladen werden:', error);
+      removeLayer(map);
+      setCheckboxChecked(checkbox, false);
+    } finally {
+      checkbox.disabled = false;
+      if (!checkbox.checked) {
+        setHint(originalHint);
+      }
+    }
+  });
 }
