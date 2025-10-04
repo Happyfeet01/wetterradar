@@ -87,7 +87,6 @@ async function boot(){
 
   ui.rngOpacity.oninput = ()=>{
     ui.lblOpacity.textContent = Math.round(Number(ui.rngOpacity.value)*100)+'%';
-    // neue Opacity greift beim nächsten Frame, optional könntest du das aktuelle Layer merken und setzen
   };
   ui.selColor.onchange = ()=> Radar.paint(L,map,ui,syncClouds);
   ui.chkSmooth.onchange = ()=> Radar.paint(L,map,ui,syncClouds);
@@ -224,6 +223,18 @@ async function boot(){
     }, { enableHighAccuracy:true, maximumAge:120000, timeout:15000 });
   };
 
+  // Marker für aktuelle Zeit
+  Radar.paint(L, map, ui, syncClouds);
+  const marker = document.getElementById('currentTimeMarker');
+  if (marker) {
+    const now = Date.now() / 1000;
+    const frames = Radar.getFrames();
+    const currentFrame = frames[Radar.getIndex()];
+    if (currentFrame && Math.abs(currentFrame.time - now) < 60) {
+      marker.style.display = 'block';
+    }
+  }
+
   // regelmäßige Aktualisierung
   setInterval(async ()=>{
     await Promise.all([Radar.loadRadar(), Sat.loadSatellite()]);
@@ -231,7 +242,18 @@ async function boot(){
     const current = frames[Radar.getIndex()];
     if(current) syncClouds(current.time);
     Radar.paint(L,map,ui,syncClouds);
+    // Aktualisiere Marker
+    const now = Date.now() / 1000;
+    if (marker && frames[Radar.getIndex()] && Math.abs(frames[Radar.getIndex()].time - now) < 60) {
+      marker.style.display = 'block';
+    } else if (marker) {
+      marker.style.display = 'none';
+    }
   }, 5*60*1000);
+
+  // Optional: Wind standardmäßig aktivieren
+  // ui.chkWindFlow.checked = true;
+  // ui.chkWindFlow.onchange();
 }
 
 boot();

@@ -9,9 +9,14 @@ export async function loadRadar(){
   const data = await fetch(RV_API, { cache:'no-store' }).then(r=>r.json());
   RV_HOST = data.host || RV_HOST_FALLBACK;
   frames = [...(data?.radar?.past ?? []), ...(data?.radar?.nowcast ?? [])];
-  idx = Math.max(0, frames.length-1);
+
+  // Setze den Index auf den letzten Zeitpunkt, der nicht in der Zukunft liegt
+  const now = Date.now() / 1000;
+  idx = frames.reduce((closest, frame, i) =>
+    (Math.abs(frame.time - now) < Math.abs(frames[closest].time - now) && frame.time <= now) ? i : closest, 0);
   return frames;
 }
+
 export function getFrames(){ return frames; }
 export function getIndex(){ return idx; }
 export function step(d){ if(!frames.length) return; idx = (idx + d + frames.length) % frames.length; }
@@ -49,4 +54,3 @@ export function paint(L, map, ui, syncCloudsCb){
 
   if (syncCloudsCb) syncCloudsCb(f.time);
 }
-

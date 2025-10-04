@@ -194,6 +194,7 @@ async function ensureWindLayer(L, map, { forceFetch = false } = {}){
         throw new Error('leaflet-velocity nicht geladen');
       }
       const payload = await fetchWindData();
+      console.log('Winddaten geladen:', payload); // Debugging-Log
       const { meta, pluginPayload } = normalizePayload(payload);
 
       if(!map.getPane('windPane')){
