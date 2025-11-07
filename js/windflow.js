@@ -6,8 +6,9 @@ let lastMetaGenerated = null;
 let lastWindData = null;
 let lastFetchTime = 0;
 
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const CACHE_DURATION_MS = 10 * 60 * 1000;
+// Zeitintervalle in Millisekunden
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 Minuten
+const CACHE_DURATION_MS = 10 * 60 * 1000; // 10 Minuten
 
 async function fetchWindData() {
   const now = Date.now();
@@ -51,7 +52,7 @@ function normalizePayload(payload) {
 
 function isMobileDevice() {
   if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') return false;
-  return /iphone|ipad|android|mobile/i.test(navigator.userAgent);
+  return /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
 }
 
 function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoomLevel = 10) {
