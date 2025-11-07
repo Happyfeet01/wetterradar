@@ -31,7 +31,7 @@ function normalizePayload(payload){
     throw new Error('Ungültige Winddaten');
   }
 
-  dataset.forEach((entry, idx)=>{
+  dataset.forEach((entry, idx)={
     if(!entry || typeof entry !== 'object'){
       throw new Error(`Ungültige Winddaten (Eintrag ${idx})`);
     }
@@ -59,17 +59,18 @@ function createVelocityLayer(L, pluginPayload, isMobile){
   return L.velocityLayer({
     data: pluginPayload,
     pane: 'windPane',
-    velocityScale:0.008,
-    maxVelocity:25,
-    lineWidth: isMobile ? 0.8 : 1.0,
-    particleMultiplier: isMobile ? 1/350 : 1/200,
-    displayValues:true,
-    displayOptions:{
-      position:'bottomleft',
-      emptyString:'Keine Winddaten',
-      velocityType:'Wind',
-      speedUnit:'m/s',
-      directionString:'Richtung'
+    velocityScale: 0.008,
+    maxVelocity: 25,
+    lineWidth: isMobile ? 1.2 : 1.5,
+    particleMultiplier: isMobile ? 1/200 : 1/100,
+    colorScale: ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'],
+    displayValues: true,
+    displayOptions: {
+      position: 'bottomleft',
+      emptyString: 'Keine Winddaten',
+      velocityType: 'Wind',
+      speedUnit: 'm/s',
+      directionString: 'Richtung'
     }
   });
 }
@@ -105,8 +106,9 @@ function resolveVelocityLayer(L, map, pluginPayload){
 
   if(nextLayer && nextLayer.options){
     nextLayer.options.data = pluginPayload;
-    nextLayer.options.lineWidth = isMobile ? 0.8 : 1.0;
-    nextLayer.options.particleMultiplier = isMobile ? 1/350 : 1/200;
+    nextLayer.options.lineWidth = isMobile ? 1.2 : 1.5;
+    nextLayer.options.particleMultiplier = isMobile ? 1/200 : 1/100;
+    nextLayer.options.colorScale = ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
   }
 
   layer = nextLayer;
@@ -117,7 +119,7 @@ function formatGeneratedLabel(generated){
   if(typeof generated !== 'string' || !generated) return '';
   const dt = new Date(generated);
   if(Number.isNaN(dt.getTime())) return generated;
-  return dt.toLocaleString('de-DE', { hour12:false });
+  return dt.toLocaleString('de-DE', { hour12: false });
 }
 
 function ensureTimestampElement(){
@@ -167,7 +169,7 @@ function applyMeta(meta){
   }
 
   if(typeof window !== 'undefined'){
-    setTimeout(()=> updateTimestampDisplay(meta), 0);
+    setTimeout(() => updateTimestampDisplay(meta), 0);
   }
 
   if(changed && generated){
@@ -194,7 +196,7 @@ async function ensureWindLayer(L, map, { forceFetch = false } = {}){
         throw new Error('leaflet-velocity nicht geladen');
       }
       const payload = await fetchWindData();
-      console.log('Winddaten geladen:', payload); // Debugging-Log
+      console.log('Winddaten geladen:', payload);
       const { meta, pluginPayload } = normalizePayload(payload);
 
       if(!map.getPane('windPane')){
@@ -254,7 +256,7 @@ export async function setWindFlow(L, map, enabled){
 
   overlayEnabled = true;
   try{
-    const result = await ensureWindLayer(L, map, { forceFetch:true });
+    const result = await ensureWindLayer(L, map, { forceFetch: true });
     if(result){
       scheduleAutoRefresh(L, map);
     }
@@ -264,4 +266,17 @@ export async function setWindFlow(L, map, enabled){
     stopAutoRefresh();
     throw err;
   }
+}
+
+/**
+ * Erstellt ein großes Pin-Icon für den Standort.
+ * @returns {L.Icon} Leaflet-Icon
+ */
+export function createLargePinIcon() {
+  return L.icon({
+    iconUrl: '/images/pin-icon.png',  // Bitte Pfad anpassen
+    iconSize: [40, 40],
+    iconAnchor: [20, 40],
+    popupAnchor: [0, -40],
+  });
 }
