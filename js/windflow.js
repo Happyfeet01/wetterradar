@@ -68,6 +68,11 @@ function isMobileDevice() {
 }
 
 function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false) {
+  if (!pluginPayload || !Array.isArray(pluginPayload.data) || pluginPayload.data.length === 0) {
+    console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
+    return L.layerGroup();
+  }
+  
   const colorScale = isDarkMode
     ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
     : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
@@ -114,7 +119,12 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false) {
   let nextLayer = layer;
 
   if (nextLayer && typeof nextLayer.setData === 'function') {
-    nextLayer.setData(pluginPayload);
+    if (!pluginPayload || !Array.isArray(pluginPayload.data) || pluginPayload.data.length === 0) {
+      console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
+      nextLayer = L.layerGroup();
+    } else {
+      nextLayer.setData(pluginPayload);
+    }
   } else {
     if (nextLayer) {
       cleanupWindLayerInstance(nextLayer, map);
