@@ -47,7 +47,23 @@ function normalizePayload(payload) {
     return { meta: null, pluginPayload: null };
   }
 
-  return { meta: payload.meta, pluginPayload: payload };
+  // Daten explizit validieren und anpassen
+  const validatedData = dataset.map(entry => {
+    if (!entry || !entry.header || !entry.data) {
+      return null;
+    }
+    return {
+      header: entry.header,
+      data: Array.isArray(entry.data) ? entry.data : []
+    };
+  }).filter(entry => entry !== null);
+
+  if (validatedData.length === 0) {
+    console.warn('Keine gültigen Winddaten nach Validierung');
+    return { meta: null, pluginPayload: null };
+  }
+
+  return { meta: payload.meta, pluginPayload: { ...payload, data: validatedData } };
 }
 
 function isMobileDevice() {
@@ -61,19 +77,6 @@ function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoo
     return L.layerGroup();
   }
   
-  // Sicherstellen, dass die Daten das erwartete Format haben
-  const data = pluginPayload.data.map(entry => {
-    if (!entry || !entry.header || !entry.data) {
-      return null;
-    }
-    return entry;
-  }).filter(entry => entry !== null);
-
-  if (data.length === 0) {
-    console.warn("Keine gültigen Winddaten nach Filterung.");
-    return L.layerGroup();
-  }
-  
   const particleMultiplier = isMobile
     ? 1 / (200 + (zoomLevel * 10))
     : 1 / (100 + (zoomLevel * 5));
@@ -82,6 +85,14 @@ function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoo
     ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
     : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
   
+  // Daten explizit anpassen, um sicherzustellen, dass sie das erwartete Format haben
+  const data = pluginPayload.data.map(entry => {
+    return {
+      header: entry.header,
+      data: entry.data
+    };
+  });
+
   return L.velocityLayer({
     data: { ...pluginPayload, data },
     pane: 'windPane',
@@ -132,7 +143,10 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
         if (!entry || !entry.header || !entry.data) {
           return null;
         }
-        return entry;
+        return {
+          header: entry.header,
+          data: entry.data
+        };
       }).filter(entry => entry !== null);
       
       if (data.length === 0) {
@@ -298,7 +312,10 @@ function scheduleAutoRefresh(L, map, isDarkMode = false) {
           if (!entry || !entry.header || !entry.data) {
             return null;
           }
-          return entry;
+          return {
+            header: entry.header,
+            data: entry.data
+          };
         }).filter(entry => entry !== null);
         
         if (data.length > 0) {
