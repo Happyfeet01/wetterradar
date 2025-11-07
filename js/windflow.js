@@ -35,42 +35,18 @@ async function fetchWindData() {
 }
 
 function normalizePayload(payload) {
-  if (!payload) return { meta: null, pluginPayload: null };
-  
-  const meta = payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload.meta
-    : null;
-  const dataset = Array.isArray(payload?.data)
-    ? payload.data
-    : Array.isArray(payload)
-      ? payload
-      : null;
-
-  if (!meta || typeof meta !== 'object' || !Array.isArray(dataset) || dataset.length === 0) {
+  if (!payload || typeof payload !== 'object') {
     console.warn('Ungültige Winddaten');
     return { meta: null, pluginPayload: null };
   }
 
-  for (const [idx, entry] of dataset.entries()) {
-    if (!entry || typeof entry !== 'object') {
-      console.warn(`Ungültige Winddaten (Eintrag ${idx})`);
-      return { meta: null, pluginPayload: null };
-    }
-    if (!entry.header || typeof entry.header !== 'object') {
-      console.warn(`Ungültige Winddaten (Header ${idx})`);
-      return { meta: null, pluginPayload: null };
-    }
-    if (!Array.isArray(entry.data)) {
-      console.warn(`Ungültige Winddaten (Daten ${idx})`);
-      return { meta: null, pluginPayload: null };
-    }
+  const dataset = Array.isArray(payload.data) ? payload.data : [];
+  if (!Array.isArray(dataset) || dataset.length === 0) {
+    console.warn('Keine gültigen Winddaten');
+    return { meta: null, pluginPayload: null };
   }
 
-  const pluginPayload = payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray(payload.data)
-    ? payload
-    : { meta, data: dataset };
-
-  return { meta, pluginPayload };
+  return { meta: payload.meta, pluginPayload: payload };
 }
 
 function isMobileDevice() {
@@ -139,6 +115,11 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
       nextLayer = L.layerGroup();
     } else {
       nextLayer.setData(pluginPayload);
+      nextLayer.setOptions({
+        particleMultiplier: isMobile
+          ? 1 / (200 + (zoomLevel * 10))
+          : 1 / (100 + (zoomLevel * 5))
+      });
     }
   } else {
     if (nextLayer) {
@@ -150,7 +131,9 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
   if (nextLayer && nextLayer.options) {
     nextLayer.options.data = pluginPayload;
     nextLayer.options.lineWidth = isMobile ? 1.2 : 1.5;
-    nextLayer.options.particleMultiplier = particleMultiplier;
+    nextLayer.options.particleMultiplier = isMobile
+      ? 1 / (200 + (zoomLevel * 10))
+      : 1 / (100 + (zoomLevel * 5));
     nextLayer.options.colorScale = isDarkMode
       ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
       : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
@@ -360,28 +343,33 @@ export function createLargePinIcon(isDarkMode = false) {
  */
 export async function loadDwdWarnings(L, map) {
   try {
-    const response = await fetch('https://wetter.larsmueller.net/dwd/warnings.jsonp?callback=handleWarnings');
+    const response = await fetch('https://wetter.larsmueller.net/dwd/warnings.json');
     if (!response.ok) throw new Error('Warnungen nicht verfügbar');
 
-    const script = document.createElement('script');
-    script.src = 'https://wetter.larsmueller.net/dwd/warnings.jsonp?callback=handleWarnings';
-    document.body.appendChild(script);
+    const warnings = await response.json();
+    if (!Array.isArray(warnings)) {
+      console.warn('Ungültiges Warnungsformat');
+      return;
+    }
 
-    window.handleWarnings = (warnings) => {
-      warnings.forEach(warning => {
-        const marker = L.marker([warning.lat, warning.lon], {
-          icon: L.icon({
-            iconUrl: '/images/warning-icon.png',
-            iconSize: [32, 32],
-            iconAnchor: [16, 32],
-          }),
-        }).addTo(map);
+    warnings.forEach(warning => {
+      if (!warning.lat || !warning.lon) return;
 
-        marker.on('click', () => {
-          alert(`Warnung: ${warning.headline}\n\n${warning.description}`);
-        });
+      const marker = L.marker([warning.lat, warning.lon], {
+        icon: L.icon({
+          iconUrl: '/images/warning-icon.png',
+          iconSize: [32, 32],
+          iconAnchor: [16, 32],
+        }),
+      }).addTo(map);
+
+      marker.on('click', () => {
+        const popup = L.popup()
+          .setLatLng([warning.lat, warning.lon])
+          .setContent(`<b>${warning.headline}</b><br>${warning.description}`)
+          .openOn(map);
       });
-    };
+    });
   } catch (err) {
     console.error('Fehler beim Laden der Warnungen:', err);
   }
