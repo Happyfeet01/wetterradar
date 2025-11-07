@@ -40,7 +40,7 @@ function normalizePayload(payload) {
     return { meta: null, pluginPayload: null };
   }
 
-  dataset.forEach((entry, idx) => {
+  for (const [idx, entry] of dataset.entries()) {
     if (!entry || typeof entry !== 'object') {
       console.warn(`Ungültige Winddaten (Eintrag ${idx})`);
       return { meta: null, pluginPayload: null };
@@ -53,7 +53,7 @@ function normalizePayload(payload) {
       console.warn(`Ungültige Winddaten (Daten ${idx})`);
       return { meta: null, pluginPayload: null };
     }
-  });
+  }
 
   const pluginPayload = payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray(payload.data)
     ? payload
