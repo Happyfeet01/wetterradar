@@ -3,10 +3,18 @@ let loading = null;
 let refreshTimer = null;
 let overlayEnabled = false;
 let lastMetaGenerated = null;
+let lastWindData = null;
+let lastFetchTime = 0;
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const CACHE_DURATION_MS = 10 * 60 * 1000;
 
 async function fetchWindData() {
+  const now = Date.now();
+  if (lastWindData && (now - lastFetchTime) < CACHE_DURATION_MS) {
+    return lastWindData;
+  }
+
   try {
     let resp = await fetch('/wind/current.json', { cache: 'no-store' });
     if (!resp.ok) {
@@ -14,12 +22,15 @@ async function fetchWindData() {
     }
     if (!resp.ok) {
       console.warn('Winddaten nicht verfügbar');
-      return null;
+      return lastWindData || null;
     }
-    return await resp.json();
+    const data = await resp.json();
+    lastWindData = data;
+    lastFetchTime = now;
+    return data;
   } catch (err) {
     console.warn('Fehler beim Laden der Winddaten:', err);
-    return null;
+    return lastWindData || null;
   }
 }
 
@@ -67,11 +78,15 @@ function isMobileDevice() {
   return /iphone|ipad|android|mobile/i.test(navigator.userAgent);
 }
 
-function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false) {
+function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoomLevel = 10) {
   if (!pluginPayload || !Array.isArray(pluginPayload.data) || pluginPayload.data.length === 0) {
     console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
     return L.layerGroup();
   }
+  
+  const particleMultiplier = isMobile
+    ? 1 / (200 + (zoomLevel * 10))
+    : 1 / (100 + (zoomLevel * 5));
   
   const colorScale = isDarkMode
     ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
@@ -83,7 +98,7 @@ function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false) {
     velocityScale: 0.008,
     maxVelocity: 25,
     lineWidth: isMobile ? 1.2 : 1.5,
-    particleMultiplier: isMobile ? 1/200 : 1/100,
+    particleMultiplier: particleMultiplier,
     colorScale: colorScale,
     displayValues: true,
     displayOptions: {
@@ -114,7 +129,7 @@ function cleanupWindLayerInstance(targetLayer, map) {
   }
 }
 
-function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false) {
+function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLevel = 10) {
   const isMobile = isMobileDevice();
   let nextLayer = layer;
 
@@ -129,13 +144,13 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false) {
     if (nextLayer) {
       cleanupWindLayerInstance(nextLayer, map);
     }
-    nextLayer = createVelocityLayer(L, pluginPayload, isMobile, isDarkMode);
+    nextLayer = createVelocityLayer(L, pluginPayload, isMobile, isDarkMode, zoomLevel);
   }
 
   if (nextLayer && nextLayer.options) {
     nextLayer.options.data = pluginPayload;
     nextLayer.options.lineWidth = isMobile ? 1.2 : 1.5;
-    nextLayer.options.particleMultiplier = isMobile ? 1/200 : 1/100;
+    nextLayer.options.particleMultiplier = particleMultiplier;
     nextLayer.options.colorScale = isDarkMode
       ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
       : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
@@ -209,7 +224,7 @@ function applyMeta(meta) {
   }
 }
 
-async function ensureWindLayer(L, map, { forceFetch = false, isDarkMode = false } = {}) {
+async function ensureWindLayer(L, map, { forceFetch = false, isDarkMode = false, zoomLevel = 10 } = {}) {
   if (loading) {
     if (forceFetch) {
       try {
@@ -239,7 +254,7 @@ async function ensureWindLayer(L, map, { forceFetch = false, isDarkMode = false 
         map.getPane('windPane').style.zIndex = 480;
       }
 
-      const nextLayer = resolveVelocityLayer(L, map, pluginPayload, isDarkMode);
+      const nextLayer = resolveVelocityLayer(L, map, pluginPayload, isDarkMode, zoomLevel);
 
       if (nextLayer && overlayEnabled && map && !map.hasLayer(nextLayer)) {
         nextLayer.addTo(map);
@@ -265,11 +280,22 @@ function stopAutoRefresh() {
 function scheduleAutoRefresh(L, map, isDarkMode = false) {
   if (!(REFRESH_INTERVAL_MS > 0)) return;
   stopAutoRefresh();
-  refreshTimer = setInterval(() => {
+  refreshTimer = setInterval(async () => {
     if (!overlayEnabled || !layer) return;
-    ensureWindLayer(L, map, { isDarkMode }).catch(err => {
+    try {
+      const payload = await fetchWindData();
+      if (!payload) return;
+      
+      const { meta, pluginPayload } = normalizePayload(payload);
+      if (!pluginPayload) return;
+
+      if (layer && typeof layer.setData === 'function') {
+        layer.setData(pluginPayload);
+        applyMeta(meta);
+      }
+    } catch (err) {
       console.warn('Windströmung konnte nicht aktualisiert werden:', err);
-    });
+    }
   }, REFRESH_INTERVAL_MS);
 }
 
@@ -291,9 +317,20 @@ export async function setWindFlow(L, map, enabled, isDarkMode = false) {
 
   overlayEnabled = true;
   try {
-    const result = await ensureWindLayer(L, map, { forceFetch: true, isDarkMode });
+    const zoomLevel = map.getZoom();
+    const result = await ensureWindLayer(L, map, { forceFetch: true, isDarkMode, zoomLevel });
     if (result) {
       scheduleAutoRefresh(L, map, isDarkMode);
+      map.on('zoomend', () => {
+        const newZoomLevel = map.getZoom();
+        if (layer && typeof layer.setOptions === 'function') {
+          layer.setOptions({
+            particleMultiplier: isMobileDevice()
+              ? 1 / (200 + (newZoomLevel * 10))
+              : 1 / (100 + (newZoomLevel * 5))
+          });
+        }
+      });
     }
     return result;
   } catch (err) {
@@ -315,4 +352,37 @@ export function createLargePinIcon(isDarkMode = false) {
     iconAnchor: [20, 40],
     popupAnchor: [0, -40],
   });
+}
+
+/**
+ * Lädt DWD-Warnungen und zeigt sie als anklickbare Marker auf der Karte an.
+ * @param {L.Map} map - Leaflet-Karteninstanz
+ */
+export async function loadDwdWarnings(L, map) {
+  try {
+    const response = await fetch('https://wetter.larsmueller.net/dwd/warnings.jsonp?callback=handleWarnings');
+    if (!response.ok) throw new Error('Warnungen nicht verfügbar');
+
+    const script = document.createElement('script');
+    script.src = 'https://wetter.larsmueller.net/dwd/warnings.jsonp?callback=handleWarnings';
+    document.body.appendChild(script);
+
+    window.handleWarnings = (warnings) => {
+      warnings.forEach(warning => {
+        const marker = L.marker([warning.lat, warning.lon], {
+          icon: L.icon({
+            iconUrl: '/images/warning-icon.png',
+            iconSize: [32, 32],
+            iconAnchor: [16, 32],
+          }),
+        }).addTo(map);
+
+        marker.on('click', () => {
+          alert(`Warnung: ${warning.headline}\n\n${warning.description}`);
+        });
+      });
+    };
+  } catch (err) {
+    console.error('Fehler beim Laden der Warnungen:', err);
+  }
 }
