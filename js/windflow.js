@@ -6,8 +6,9 @@ let lastMetaGenerated = null;
 let lastWindData = null;
 let lastFetchTime = 0;
 
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const CACHE_DURATION_MS = 10 * 60 * 1000;
+// Zeitintervalle in Millisekunden
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 Minuten
+const CACHE_DURATION_MS = 10 * 60 * 1000; // 10 Minuten
 
 async function fetchWindData() {
   const now = Date.now();
@@ -51,12 +52,25 @@ function normalizePayload(payload) {
 
 function isMobileDevice() {
   if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') return false;
-  return /iphone|ipad|android|mobile/i.test(navigator.userAgent);
+  return /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
 }
 
 function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoomLevel = 10) {
   if (!pluginPayload || !Array.isArray(pluginPayload.data) || pluginPayload.data.length === 0) {
     console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
+    return L.layerGroup();
+  }
+  
+  // Sicherstellen, dass die Daten das erwartete Format haben
+  const data = pluginPayload.data.map(entry => {
+    if (!entry || !entry.header || !entry.data) {
+      return null;
+    }
+    return entry;
+  }).filter(entry => entry !== null);
+
+  if (data.length === 0) {
+    console.warn("Keine gültigen Winddaten nach Filterung.");
     return L.layerGroup();
   }
   
@@ -69,7 +83,7 @@ function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoo
     : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
   
   return L.velocityLayer({
-    data: pluginPayload,
+    data: { ...pluginPayload, data },
     pane: 'windPane',
     velocityScale: 0.008,
     maxVelocity: 25,
@@ -114,12 +128,19 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
       console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
       nextLayer = L.layerGroup();
     } else {
-      nextLayer.setData(pluginPayload);
-      nextLayer.setOptions({
-        particleMultiplier: isMobile
-          ? 1 / (200 + (zoomLevel * 10))
-          : 1 / (100 + (zoomLevel * 5))
-      });
+      const data = pluginPayload.data.map(entry => {
+        if (!entry || !entry.header || !entry.data) {
+          return null;
+        }
+        return entry;
+      }).filter(entry => entry !== null);
+      
+      if (data.length === 0) {
+        console.warn("Keine gültigen Winddaten nach Filterung.");
+        nextLayer = L.layerGroup();
+      } else {
+        nextLayer.setData({ ...pluginPayload, data });
+      }
     }
   } else {
     if (nextLayer) {
@@ -273,8 +294,17 @@ function scheduleAutoRefresh(L, map, isDarkMode = false) {
       if (!pluginPayload) return;
 
       if (layer && typeof layer.setData === 'function') {
-        layer.setData(pluginPayload);
-        applyMeta(meta);
+        const data = pluginPayload.data.map(entry => {
+          if (!entry || !entry.header || !entry.data) {
+            return null;
+          }
+          return entry;
+        }).filter(entry => entry !== null);
+        
+        if (data.length > 0) {
+          layer.setData({ ...pluginPayload, data });
+          applyMeta(meta);
+        }
       }
     } catch (err) {
       console.warn('Windströmung konnte nicht aktualisiert werden:', err);
