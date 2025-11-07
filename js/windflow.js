@@ -40,7 +40,7 @@ function normalizePayload(payload) {
     return { meta: null, pluginPayload: null };
   }
 
-  dataset.forEach((entry, idx) => {
+  for (const [idx, entry] of dataset.entries()) {
     if (!entry || typeof entry !== 'object') {
       console.warn(`Ungültige Winddaten (Eintrag ${idx})`);
       return { meta: null, pluginPayload: null };
@@ -53,7 +53,7 @@ function normalizePayload(payload) {
       console.warn(`Ungültige Winddaten (Daten ${idx})`);
       return { meta: null, pluginPayload: null };
     }
-  });
+  }
 
   const pluginPayload = payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray(payload.data)
     ? payload
@@ -68,6 +68,11 @@ function isMobileDevice() {
 }
 
 function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false) {
+  if (!pluginPayload || !Array.isArray(pluginPayload.data) || pluginPayload.data.length === 0) {
+    console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
+    return L.layerGroup();
+  }
+  
   const colorScale = isDarkMode
     ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
     : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
@@ -114,7 +119,12 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false) {
   let nextLayer = layer;
 
   if (nextLayer && typeof nextLayer.setData === 'function') {
-    nextLayer.setData(pluginPayload);
+    if (!pluginPayload || !Array.isArray(pluginPayload.data) || pluginPayload.data.length === 0) {
+      console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
+      nextLayer = L.layerGroup();
+    } else {
+      nextLayer.setData(pluginPayload);
+    }
   } else {
     if (nextLayer) {
       cleanupWindLayerInstance(nextLayer, map);
