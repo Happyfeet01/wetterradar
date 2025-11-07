@@ -87,7 +87,7 @@ function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoo
   const particleMultiplier = isMobile
     ? 1 / (200 + (zoomLevel * 10))
     : 1 / (100 + (zoomLevel * 5));
-  
+
   const colorScale = isDarkMode
     ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
     : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
@@ -139,6 +139,11 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
       nextLayer = L.layerGroup();
     } else {
       nextLayer.setData(pluginPayload);
+      nextLayer.setOptions({
+        particleMultiplier: isMobile
+          ? 1 / (200 + (zoomLevel * 10))
+          : 1 / (100 + (zoomLevel * 5))
+      });
     }
   } else {
     if (nextLayer) {
@@ -150,7 +155,9 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
   if (nextLayer && nextLayer.options) {
     nextLayer.options.data = pluginPayload;
     nextLayer.options.lineWidth = isMobile ? 1.2 : 1.5;
-    nextLayer.options.particleMultiplier = particleMultiplier;
+    nextLayer.options.particleMultiplier = isMobile
+      ? 1 / (200 + (zoomLevel * 10))
+      : 1 / (100 + (zoomLevel * 5));
     nextLayer.options.colorScale = isDarkMode
       ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
       : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
