@@ -375,6 +375,7 @@ export async function setWindFlow(L, map, enabled, isDarkMode = false) {
  * @param {boolean} isDarkMode - Ob das Icon für Darkmode angepasst werden soll
  * @returns {L.Icon} Leaflet-Icon
  */
+
 export function createLargePinIcon(isDarkMode = false) {
   return L.icon({
     iconUrl: isDarkMode ? '/images/pin-icon-dark.png' : '/images/pin-icon.png',
