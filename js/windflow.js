@@ -13,6 +13,7 @@ const CACHE_DURATION_MS = 10 * 60 * 1000; // 10 Minuten
 async function fetchWindData() {
   const now = Date.now();
   if (lastWindData && (now - lastFetchTime) < CACHE_DURATION_MS) {
+    console.log("Verwende gecachte Winddaten");
     return lastWindData;
   }
 
@@ -26,6 +27,7 @@ async function fetchWindData() {
       return lastWindData || null;
     }
     const data = await resp.json();
+    console.log("Winddaten geladen:", data); // Debugging-Ausgabe
     lastWindData = data;
     lastFetchTime = now;
     return data;
@@ -63,6 +65,7 @@ function normalizePayload(payload) {
     return { meta: null, pluginPayload: null };
   }
 
+  console.log("Validierte Winddaten:", validatedData); // Debugging-Ausgabe
   return { meta: payload.meta, pluginPayload: { ...payload, data: validatedData } };
 }
 
@@ -85,6 +88,7 @@ function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoo
     ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
     : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
   
+  console.log("Erstelle Windströmung mit Daten:", pluginPayload); // Debugging-Ausgabe
   return L.velocityLayer({
     data: pluginPayload,
     pane: 'windPane',
@@ -131,6 +135,7 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
       console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
       nextLayer = L.layerGroup();
     } else {
+      console.log("Aktualisiere Windströmung mit neuen Daten"); // Debugging-Ausgabe
       nextLayer.setData(pluginPayload);
     }
   } else {
@@ -278,6 +283,7 @@ function scheduleAutoRefresh(L, map, isDarkMode = false) {
   refreshTimer = setInterval(async () => {
     if (!overlayEnabled || !layer) return;
     try {
+      console.log("Aktualisiere Winddaten...") // Debugging-Ausgabe
       const payload = await fetchWindData();
       if (!payload) return;
       
@@ -359,6 +365,7 @@ export async function loadDwdWarnings(L, map) {
     if (!response.ok) throw new Error('Warnungen nicht verfügbar');
 
     const warnings = await response.json();
+    console.log("Warnungen geladen:", warnings); // Debugging-Ausgabe
     if (!Array.isArray(warnings)) {
       console.warn('Ungültiges Warnungsformat');
       return;
@@ -372,6 +379,7 @@ export async function loadDwdWarnings(L, map) {
       const lon = parseFloat(warning.lon);
 
       if (bounds.contains([lat, lon])) {
+        console.log(`Zeige Warnung bei ${lat}, ${lon}: ${warning.headline}`); // Debugging-Ausgabe
         const marker = L.marker([lat, lon], {
           icon: L.icon({
             iconUrl: '/images/warning-icon.png',
