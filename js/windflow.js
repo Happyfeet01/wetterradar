@@ -27,7 +27,7 @@ async function fetchWindData() {
       return lastWindData || null;
     }
     const data = await resp.json();
-    console.log("Winddaten geladen:", data); // Debugging-Ausgabe
+    console.log("Winddaten geladen:", data);
     lastWindData = data;
     lastFetchTime = now;
     return data;
@@ -49,7 +49,6 @@ function normalizePayload(payload) {
     return { meta: null, pluginPayload: null };
   }
 
-  // Daten explizit validieren und anpassen
   const validatedData = dataset.map(entry => {
     if (!entry || !entry.header || !Array.isArray(entry.data)) {
       return null;
@@ -65,8 +64,7 @@ function normalizePayload(payload) {
     return { meta: null, pluginPayload: null };
   }
 
-  console.log("Validierte Winddaten:", validatedData); // Debugging-Ausgabe
-  return { meta: payload.meta, pluginPayload: { ...payload, data: validatedData } };
+  return { meta: payload.meta, pluginPayload: { meta: payload.meta, data: validatedData } };
 }
 
 function isMobileDevice() {
@@ -88,26 +86,32 @@ function createVelocityLayer(L, pluginPayload, isMobile, isDarkMode = false, zoo
     ? ['#00FFFF', '#00AAFF', '#FF00FF', '#FF5500', '#FFFF00']
     : ['#00FFFF', '#0000FF', '#FF00FF', '#FF0000', '#FFFF00'];
   
-  console.log("Erstelle Windströmung mit Daten:", pluginPayload); // Debugging-Ausgabe
-  return L.velocityLayer({
-    data: pluginPayload,
-    pane: 'windPane',
-    velocityScale: 0.008,
-    maxVelocity: 25,
-    lineWidth: isMobile ? 1.2 : 1.5,
-    particleMultiplier: particleMultiplier,
-    colorScale: colorScale,
-    displayValues: true,
-    displayOptions: {
-      position: 'bottomleft',
-      emptyString: 'Keine Winddaten',
-      velocityType: 'Wind',
-      speedUnit: 'm/s',
-      directionString: 'Richtung',
-      color: isDarkMode ? '#FFFFFF' : '#000000',
-      backgroundColor: isDarkMode ? '#000000' : '#FFFFFF',
-    }
-  });
+  try {
+    const velocityLayer = L.velocityLayer({
+      displayValues: true,
+      displayOptions: {
+        velocityType: 'Wind',
+        position: 'bottomleft',
+        emptyString: 'Keine Winddaten',
+        angleConvention: 'bearingCW',
+        displayPosition: 'bottomleft',
+        displayEmptyString: 'Keine Winddaten',
+        color: isDarkMode ? '#FFFFFF' : '#000000',
+        backgroundColor: isDarkMode ? '#000000' : '#FFFFFF',
+      },
+      data: pluginPayload.data,
+      maxVelocity: 25,
+      velocityScale: 0.008,
+      lineWidth: isMobile ? 1.2 : 1.5,
+      particleMultiplier: particleMultiplier,
+      colorScale: colorScale,
+    });
+
+    return velocityLayer;
+  } catch (err) {
+    console.error('Fehler beim Erstellen der Windströmung:', err);
+    return L.layerGroup();
+  }
 }
 
 function cleanupWindLayerInstance(targetLayer, map) {
@@ -135,7 +139,6 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
       console.warn("Keine gültigen Winddaten für die Darstellung verfügbar.");
       nextLayer = L.layerGroup();
     } else {
-      console.log("Aktualisiere Windströmung mit neuen Daten"); // Debugging-Ausgabe
       nextLayer.setData(pluginPayload);
     }
   } else {
@@ -283,7 +286,6 @@ function scheduleAutoRefresh(L, map, isDarkMode = false) {
   refreshTimer = setInterval(async () => {
     if (!overlayEnabled || !layer) return;
     try {
-      console.log("Aktualisiere Winddaten...") // Debugging-Ausgabe
       const payload = await fetchWindData();
       if (!payload) return;
       
@@ -365,7 +367,7 @@ export async function loadDwdWarnings(L, map) {
     if (!response.ok) throw new Error('Warnungen nicht verfügbar');
 
     const warnings = await response.json();
-    console.log("Warnungen geladen:", warnings); // Debugging-Ausgabe
+    console.log("Warnungen geladen:", warnings);
     if (!Array.isArray(warnings)) {
       console.warn('Ungültiges Warnungsformat');
       return;
@@ -379,7 +381,7 @@ export async function loadDwdWarnings(L, map) {
       const lon = parseFloat(warning.lon);
 
       if (bounds.contains([lat, lon])) {
-        console.log(`Zeige Warnung bei ${lat}, ${lon}: ${warning.headline}`); // Debugging-Ausgabe
+        console.log(`Zeige Warnung bei ${lat}, ${lon}: ${warning.headline}`);
         const marker = L.marker([lat, lon], {
           icon: L.icon({
             iconUrl: '/images/warning-icon.png',
