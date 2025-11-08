@@ -49,12 +49,12 @@ function normalizePayload(payload) {
 
   // Daten explizit validieren und anpassen
   const validatedData = dataset.map(entry => {
-    if (!entry || !entry.header || !entry.data) {
+    if (!entry || !entry.header || !Array.isArray(entry.data)) {
       return null;
     }
     return {
       header: entry.header,
-      data: Array.isArray(entry.data) ? entry.data : []
+      data: entry.data
     };
   }).filter(entry => entry !== null);
 
@@ -140,7 +140,7 @@ function resolveVelocityLayer(L, map, pluginPayload, isDarkMode = false, zoomLev
       nextLayer = L.layerGroup();
     } else {
       const data = pluginPayload.data.map(entry => {
-        if (!entry || !entry.header || !entry.data) {
+        if (!entry || !entry.header || !Array.isArray(entry.data)) {
           return null;
         }
         return {
@@ -309,7 +309,7 @@ function scheduleAutoRefresh(L, map, isDarkMode = false) {
 
       if (layer && typeof layer.setData === 'function') {
         const data = pluginPayload.data.map(entry => {
-          if (!entry || !entry.header || !entry.data) {
+          if (!entry || !entry.header || !Array.isArray(entry.data)) {
             return null;
           }
           return {
@@ -399,23 +399,29 @@ export async function loadDwdWarnings(L, map) {
       return;
     }
 
+    const bounds = map.getBounds();
     warnings.forEach(warning => {
       if (!warning.lat || !warning.lon) return;
 
-      const marker = L.marker([warning.lat, warning.lon], {
-        icon: L.icon({
-          iconUrl: '/images/warning-icon.png',
-          iconSize: [32, 32],
-          iconAnchor: [16, 32],
-        }),
-      }).addTo(map);
+      const lat = parseFloat(warning.lat);
+      const lon = parseFloat(warning.lon);
 
-      marker.on('click', () => {
-        const popup = L.popup()
-          .setLatLng([warning.lat, warning.lon])
-          .setContent(`<b>${warning.headline}</b><br>${warning.description}`)
-          .openOn(map);
-      });
+      if (bounds.contains([lat, lon])) {
+        const marker = L.marker([lat, lon], {
+          icon: L.icon({
+            iconUrl: '/images/warning-icon.png',
+            iconSize: [32, 32],
+            iconAnchor: [16, 32],
+          }),
+        }).addTo(map);
+
+        marker.on('click', () => {
+          const popup = L.popup()
+            .setLatLng([lat, lon])
+            .setContent(`<b>${warning.headline}</b><br>${warning.description}`)
+            .openOn(map);
+        });
+      }
     });
   } catch (err) {
     console.error('Fehler beim Laden der Warnungen:', err);
