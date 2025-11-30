@@ -8,11 +8,14 @@ const WARNING_LEVEL_COLORS = {
   4: '#800080'
 };
 let mapInstance = null;
+let leaflet = null;
 let cachedWarnings = [];
 let filterUsesBounds = true;
+let warningLayer = null;
 
 export function bind(L, map, ui){
   mapInstance = map;
+  leaflet = L;
 
   // --- Pane für Warn-Layer (über Radar/Wolken) ---
   map.createPane('warnPane');
@@ -46,7 +49,20 @@ export function bind(L, map, ui){
   // --- WMS Toggle ---
   function toggleWms(on){
     if(on){
-      if(wms){ wms.addTo(map); return; }
+      if(wms){
+        if (!warningLayer){
+          warningLayer = L.layerGroup().addTo(map);
+        } else if(!map.hasLayer(warningLayer)){
+          warningLayer.addTo(map);
+        }
+        wms.addTo(map);
+        return;
+      }
+      if (!warningLayer){
+        warningLayer = L.layerGroup().addTo(map);
+      }else if(!map.hasLayer(warningLayer)){
+        warningLayer.addTo(map);
+      }
       wms = L.tileLayer.wms(DWD_WMS, {
         pane:'warnPane',
         layers:DWD_WMS_LAYER,
@@ -58,8 +74,13 @@ export function bind(L, map, ui){
         opacity:0.75,
         attribution:'Warnungen © DWD'
       }).addTo(map);
-    } else if (wms){
-      map.removeLayer(wms);
+    } else {
+      if (wms){
+        map.removeLayer(wms);
+      }
+      if (warningLayer && map.hasLayer(warningLayer)){
+        map.removeLayer(warningLayer);
+      }
     }
   }
 
@@ -174,6 +195,7 @@ export function renderWarnings(warnings){
   filtered.sort((a, b) => Number(b?.level ?? 0) - Number(a?.level ?? 0));
 
   updateWarningList(filtered);
+  updateWarningMarkers(filtered);
   return filtered;
 }
 
@@ -286,6 +308,51 @@ function isWarningInsideBounds(warning, bounds){
 
   const { lat, lon } = coords;
   return bounds.contains([lat, lon]);
+}
+
+function updateWarningMarkers(warnings){
+  if (!mapInstance || !leaflet) return;
+
+  const warnToggle = document.getElementById('chkWarn');
+  if (warnToggle && !warnToggle.checked){
+    if (warningLayer){
+      warningLayer.clearLayers();
+      mapInstance.removeLayer(warningLayer);
+    }
+    return;
+  }
+
+  if (!warningLayer){
+    warningLayer = leaflet.layerGroup().addTo(mapInstance);
+  } else {
+    warningLayer.addTo(mapInstance);
+  }
+
+  warningLayer.clearLayers();
+  if (!Array.isArray(warnings)) return;
+
+  warnings.forEach(warning => {
+    const coords = extractCoordinates(warning);
+    if (!coords) return;
+
+    const level = Number(warning?.level ?? warning?.severity ?? 0);
+    const color = WARNING_LEVEL_COLORS[level] || '#1976d2';
+
+    const marker = leaflet.circleMarker([coords.lat, coords.lon], {
+      radius: 6,
+      color,
+      weight: 2,
+      fillColor: color,
+      fillOpacity: 0.6
+    });
+
+    const title = warning?.headline || warning?.event || 'Wetterwarnung';
+    if (title){
+      marker.bindPopup(title);
+    }
+
+    warningLayer.addLayer(marker);
+  });
 }
 
 function extractCoordinates(warning){
