@@ -8,18 +8,21 @@ Interaktive Wetterkarte mit Radar- und Satellitenanimation, Wind-Partikelfeld un
   *Vergangenheit + Nowcast* (kurzfristige Vorhersage), animiert über Time-Slider.
 - **IR-Satellitenbilder (RainViewer)**  
   Synchronisiert zum Radar-Zeitpunkt; ein-/ausblendbar, Opazität regelbar.
-- **Wind-Partikelfeld (leaflet-velocity)**  
+- **Wind-Partikelfeld (leaflet-velocity)**
   Vektorfeld aus Open-Meteo (10 m Wind), als animierte Partikel (east/north-Komponenten).
-- **DWD-Warnungen**  
+- **DWD-Warnungen**
   Parsing des **CAP-Feeds**: Polygone/Kreise als Leaflet-Overlays, farbcodiert nach Severity; Warnliste in Panel.
-- **UI/Controls**  
+- **Blitzortung-Livefeed (SSE)**
+  Echtzeit-Blitzereignisse via Server-Sent Events; Anzeige als Marker mit Counter im Kartenausschnitt.
+- **UI/Controls**
   Layer-Toggles, Opazitäts-Slider, Farbschema, „Smooth“, Play/Pause, Zeitsprung, Legende, Zeitstempel.
 
 ## Datenquellen
 
-- **RainViewer Weather Maps API** – Radar/Satellit (Tiles + Frames)  
-- **Open-Meteo API** – Windgeschwindigkeit/-richtung (10 m)  
+- **RainViewer Weather Maps API** – Radar/Satellit (Tiles + Frames)
+- **Open-Meteo API** – Windgeschwindigkeit/-richtung (10 m)
 - **DWD CAP/JSON** – amtliche Warnungen (Polygone + Metadaten)
+- **Blitzortung.org** – Live-Blitzmeldungen (via eigener SSE-Bridge)
 
 > Hinweis zu Limits (Stand 2025): RainViewer Free begrenzt Zoom (≤ 10) und Nowcast-Dauer; IR-Satellit wird von RainViewer mittelfristig eingeschränkt. Prüfe ggf. die aktuellen Nutzungsbedingungen/Docs.
 
@@ -104,6 +107,23 @@ WantedBy=multi-user.target
 ```
 
 > Alternativ kann `npm run wind:once` alle 30 Minuten über Cron gestartet werden.
+
+## Live-Blitze via Blitzortung (optional)
+
+- **Zweck:** Echtzeit-Blitzereignisse aus der Blitzortung-Community als SSE-Stream einblenden. Das Frontend lauscht standardmäßig auf `/blitze` (konfigurierbar in `js/config.js`).
+- **Bridge-Server:** `blitz-proxy.js` startet einen kleinen Express-Server mit SSE-Endpunkt, der die Blitzortung-Daten aus `@simonschick/blitzortungapi` weiterreicht und die letzten 10 Minuten puffert.
+- **Start (lokal oder als Dienst):**
+
+  ```bash
+  # Abhängigkeiten sind bereits in package.json enthalten
+  node blitz-proxy.js
+  # → lauscht auf http://localhost:9024/blitze (SSE)
+  ```
+
+- **Frontend anbinden:**
+  - Läuft die Seite auf demselben Host/Port, reicht der Default `/blitze`.
+  - Bei abweichendem Port/Host im Frontend `SSE_LIGHTNING` (in `js/config.js`) auf die volle URL setzen, z. B. `http://localhost:9024/blitze`.
+- **Sicherheit/Hinweise:** Der SSE-Endpoint wird mit `cors()` freigegeben. Bei produktivem Einsatz ggf. die erlaubten Origins einschränken und den Dienst hinter einen Reverse-Proxy (https) hängen.
 
 ## Deployment-Hinweise
 

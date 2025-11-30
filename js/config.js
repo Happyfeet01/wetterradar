@@ -8,6 +8,10 @@ export const RV_HOST_FALLBACK = 'https://tilecache.rainviewer.com';
 export const RADAR_SIZE = 256;
 export const PLAY_FADE_MS = 280;
 
+// Blitzortung-Livefeed (SSE)
+export const SSE_LIGHTNING = '/blitze';
+export const STRIKE_RETAIN_MS = 10 * 60 * 1000; // 10 Minuten anzeigen
+
 export const DWD_WMS = 'https://maps.dwd.de/geoserver/dwd/ows?';
 export const DWD_WMS_LAYER = 'dwd:Warnungen_Landkreise';
 export const DWD_WARN_JSON = '/dwd/warnings.json';
