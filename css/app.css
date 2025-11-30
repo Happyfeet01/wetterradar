@@ -3,12 +3,15 @@
   --fg-text:#222; --fg-hint:#666;
 }
 body.dark{
-  --bg-panel: rgba(20,20,20,0.9);
-  --fg-text:#eee; --fg-hint:#aaa;
-  background:#000; color:var(--fg-text);
+  --bg-panel: rgba(28,28,32,0.9);
+  --fg-text:#f2f2f2; --fg-hint:#b5b5b5;
+  background:#0b0e16; color:var(--fg-text);
 }
 html,body,#map{height:100%;margin:0}
-body.dark #map{background:#000;}
+body.dark #map{background:#0b0e16;}
+body.dark .leaflet-pane.leaflet-tile-pane img{
+  filter: brightness(1.25) contrast(1.08) saturate(1.08);
+}
 
 .leaflet-control-attribution{
   background:rgba(255,255,255,0.85);
