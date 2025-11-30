@@ -43,7 +43,8 @@ Interaktive Wetterkarte mit Radar- und Satellitenanimation, Wind-Partikelfeld un
 ## Windströmungsdaten (`/wind/current.json`)
 
 - **Veröffentlichter Endpunkt:** Das Leaflet-Velocity-Overlay lädt seine Vektordaten aus `https://<host>/wind/current.json`. Im Repo liegt ein synthetisches Platzhalterfeld (`wind/current.json`), damit der Endpunkt auch ohne laufenden Fetcher gültige Metadaten liefert.
-- **Fetcher:** `wind-fetcher.js` sampelt das Open-Meteo-GFS (10 m Wind) rasterförmig über Mitteleuropa und schreibt die U/V-Komponenten in das Leaflet-Velocity-Format. Standard: 1°-Raster, Aktualisierung alle 30 min, Requests leicht gedrosselt.
+- **Fetcher:** `wind-fetcher.js` sampelt das Open-Meteo-GFS (10 m Wind) rasterförmig über Europa (Standard) und schreibt die U/V-Komponenten in das Leaflet-Velocity-Format. Standard: 1°-Raster, Aktualisierung alle 30 min, Requests leicht gedrosselt.
+- **Standard-Ausschnitt:** Europa ist nun der Default (siehe Tabelle). Globaler Abruf ist möglich, aber eher ein Nice-to-have und bedarf ggf. groberem Raster.
 - **Aufruf:**
   - Einmalige Aktualisierung (z. B. via Cron): `npm run wind:once`
   - Dauerschleife mit Intervall (z. B. systemd-Service): `npm run wind:watch`
@@ -51,8 +52,8 @@ Interaktive Wetterkarte mit Radar- und Satellitenanimation, Wind-Partikelfeld un
 
   | Variable | Bedeutung | Standard |
   | --- | --- | --- |
-  | `WIND_LAT_MAX` / `WIND_LAT_MIN` | Nord-/Südbegrenzung des Gitters (Grad) | `56` / `46` |
-  | `WIND_LON_MIN` / `WIND_LON_MAX` | West-/Ostbegrenzung (Grad) | `5` / `16` |
+  | `WIND_LAT_MAX` / `WIND_LAT_MIN` | Nord-/Südbegrenzung des Gitters (Grad) | `72` / `34` |
+  | `WIND_LON_MIN` / `WIND_LON_MAX` | West-/Ostbegrenzung (Grad) | `-25` / `45` |
   | `WIND_LAT_STEP` / `WIND_LON_STEP` | Rasterauflösung in Grad | `1` |
   | `WIND_REFRESH_MINUTES` | Aktualisierungsintervall | `30` |
   | `WIND_REQUEST_DELAY_MS` | Pause zwischen Open-Meteo-Requests | `150` |

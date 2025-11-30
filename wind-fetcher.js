@@ -20,10 +20,10 @@ const clampNumber = (value, fallback) => {
 };
 
 const bounds = {
-  north: clampNumber(process.env.WIND_LAT_MAX, 56.0),
-  south: clampNumber(process.env.WIND_LAT_MIN, 46.0),
-  west: clampNumber(process.env.WIND_LON_MIN, 5.0),
-  east: clampNumber(process.env.WIND_LON_MAX, 16.0)
+  north: clampNumber(process.env.WIND_LAT_MAX, 72.0),
+  south: clampNumber(process.env.WIND_LAT_MIN, 34.0),
+  west: clampNumber(process.env.WIND_LON_MIN, -25.0),
+  east: clampNumber(process.env.WIND_LON_MAX, 45.0)
 };
 
 if (bounds.north <= bounds.south) {
