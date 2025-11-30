@@ -58,6 +58,28 @@ Interaktive Wetterkarte mit Radar- und Satellitenanimation, Wind-Partikelfeld un
   | `WIND_REQUEST_DELAY_MS` | Pause zwischen Open-Meteo-Requests | `150` |
   | `WIND_API_URL` / `WIND_API_PARAMS` | Alternative API bzw. Parameterliste | Open-Meteo GFS, `wind_speed_10m,wind_direction_10m` |
 
+- **Ausschnitt anpassen (Beispiele):** Die Grenzen steuern, welche Region gesampelt wird. Größere Ausschnitte bzw. feinere Raster bedeuten mehr Einzel-Requests (≈ `nx * ny`).
+
+  | Region | Grenzen setzen | Hinweis |
+  | --- | --- | --- |
+  | **Europa** | `WIND_LAT_MAX=72`, `WIND_LAT_MIN=34`, `WIND_LON_MIN=-25`, `WIND_LON_MAX=45` | Schrittweite bei `1` lassen, damit die Laufzeit moderat bleibt. |
+  | **Global** | `WIND_LAT_MAX=90`, `WIND_LAT_MIN=-90`, `WIND_LON_MIN=-180`, `WIND_LON_MAX=180` | Rasterweite ggf. auf `2–5` Grad erhöhen, sonst wird der Durchlauf sehr lang. |
+
+- **Aufruf mit angepasstem Ausschnitt:**
+
+  ```bash
+  # Einmaliger Lauf nur für Europa (Beispiel)
+  WIND_LAT_MAX=72 WIND_LAT_MIN=34 \
+  WIND_LON_MIN=-25 WIND_LON_MAX=45 \
+  npm run wind:once
+
+  # Endlosschleife mit globalem Raster (luftigeres Grid)
+  WIND_LAT_MAX=90 WIND_LAT_MIN=-90 \
+  WIND_LON_MIN=-180 WIND_LON_MAX=180 \
+  WIND_LAT_STEP=3 WIND_LON_STEP=3 \
+  npm run wind:watch
+  ```
+
 - **Fehlertoleranz:** Scheitert ein Lauf (z. B. API nicht erreichbar), bleibt die zuletzt erzeugte `current.json` erhalten; Fehler werden im Log ausgegeben.
 
 ### Beispiel systemd-Unit (optional)
