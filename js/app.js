@@ -1,15 +1,30 @@
-import { OSM_URL, PLAY_FADE_MS } from './config.js';
+import { OSM_ATTRIB, OSM_DARK_ATTRIB, OSM_DARK_URL, OSM_URL, PLAY_FADE_MS } from './config.js';
 import * as Radar from './radar.js';
 import * as Sat from './satellite.js';
 import { bind as bindWarnings } from './warnings.js';
 import { bindWindFlow } from './windflow.js';
 
 const map = L.map('map', { zoomSnap:0.5, worldCopyJump:true, maxZoom:10 }).setView([51.2,10.5], 6);
-L.tileLayer(OSM_URL, { maxZoom:19, attribution:'© OpenStreetMap-Mitwirkende' }).addTo(map);
+const baseTiles = {
+  light: L.tileLayer(OSM_URL, { maxZoom:19, attribution:OSM_ATTRIB }),
+  dark: L.tileLayer(OSM_DARK_URL, { maxZoom:19, attribution:OSM_DARK_ATTRIB }),
+};
+baseTiles.light.addTo(map);
 
 // Panes
 map.createPane('radarPane');  map.getPane('radarPane').style.zIndex = 450;
 map.createPane('cloudPane');  map.getPane('cloudPane').style.zIndex = 500;
+
+function applyDarkMode(enabled){
+  document.body.classList.toggle('dark', enabled);
+  if(enabled){
+    if(map.hasLayer(baseTiles.light)) map.removeLayer(baseTiles.light);
+    if(!map.hasLayer(baseTiles.dark)) baseTiles.dark.addTo(map);
+  }else{
+    if(map.hasLayer(baseTiles.dark)) map.removeLayer(baseTiles.dark);
+    if(!map.hasLayer(baseTiles.light)) baseTiles.light.addTo(map);
+  }
+}
 
 // UI
 const $ = id => document.getElementById(id);
@@ -68,7 +83,8 @@ async function boot(){
   ui.chkClouds.onchange = ()=> Sat.toggle(L, map, ui.chkClouds.checked, Number(ui.rngClouds.value));
   ui.rngClouds.oninput = ()=>{ ui.lblClouds.textContent=Math.round(Number(ui.rngClouds.value)*100)+'%'; Sat.setOpacity(Number(ui.rngClouds.value)); };
 
-  ui.chkDark.onchange = ()=> document.body.classList.toggle('dark', ui.chkDark.checked);
+  ui.chkDark.onchange = ()=> applyDarkMode(ui.chkDark.checked);
+  applyDarkMode(ui.chkDark.checked);
 
   const locationTooltipOptions = { permanent:true, direction:'top', offset:[0,-22], className:'wind-tooltip' };
   let locateMarker=null, locateCircle=null;

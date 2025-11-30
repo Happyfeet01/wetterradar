@@ -1,4 +1,7 @@
 export const OSM_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+export const OSM_DARK_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+export const OSM_ATTRIB = '© OpenStreetMap-Mitwirkende';
+export const OSM_DARK_ATTRIB = '© OpenStreetMap-Mitwirkende, © CARTO';
 
 export const RV_API = 'https://api.rainviewer.com/public/weather-maps.json';
 export const RV_HOST_FALLBACK = 'https://tilecache.rainviewer.com';
