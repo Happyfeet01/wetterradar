@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-const API_URL = 'https://nina.api.bund.dev/api31/warnings/geom';
+const API_URL = process.env.NINA_API_URL || 'https://nina.api.bund.dev/api31/warnings/geojson';
 const OUTPUT_DIR = path.join(process.cwd(), 'warnings');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'nina.json');
 

@@ -133,7 +133,7 @@ WantedBy=multi-user.target
 
 ## NINA/BBK-Warnungen automatisiert aktualisieren
 
-- **Fetcher:** `nina-fetcher.js` lädt die aktiven NINA/BBK-Warnungen und schreibt sie als `warnings/nina.json` (GeoJSON FeatureCollection) ins Webroot.
+- **Fetcher:** `nina-fetcher.js` lädt die aktiven NINA/BBK-Warnungen und schreibt sie als `warnings/nina.json` (GeoJSON FeatureCollection) ins Webroot. Der API-Endpunkt kann bei Bedarf über die Umgebungsvariable `NINA_API_URL` überschrieben werden (Default: `https://nina.api.bund.dev/api31/warnings/geojson`).
 - **systemd-Units im Repo:**
   - `nina-fetcher.service` – einmaliger Lauf (oneshot), führt `node nina-fetcher.js` im Projektverzeichnis aus.
   - `nina-fetcher.timer` – startet den Service alle 5 Minuten (`OnCalendar=*:0/5`, `Persistent=true`).
