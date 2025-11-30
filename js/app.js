@@ -2,7 +2,7 @@ import { OSM_URL, PLAY_FADE_MS } from './config.js';
 import * as Radar from './radar.js';
 import * as Sat from './satellite.js';
 import { bind as bindWarnings } from './warnings.js';
-import { setWindFlow } from './windflow.js';
+import { bindWindFlow } from './windflow.js';
 
 const map = L.map('map', { zoomSnap:0.5, worldCopyJump:true, maxZoom:10 }).setView([51.2,10.5], 6);
 L.tileLayer(OSM_URL, { maxZoom:19, attribution:'© OpenStreetMap-Mitwirkende' }).addTo(map);
@@ -28,6 +28,7 @@ const ui = {
 
 // Modules
 bindWarnings(L, map, ui);
+bindWindFlow(L, map, ui);
 
 if(ui.btnPanelToggle && ui.controlPanel){
   ui.btnPanelToggle.onclick = ()=>{
@@ -35,33 +36,6 @@ if(ui.btnPanelToggle && ui.controlPanel){
     ui.btnPanelToggle.setAttribute('aria-expanded', String(!collapsed));
     ui.btnPanelToggle.textContent = collapsed ? '▸' : '▾';
     ui.btnPanelToggle.setAttribute('aria-label', collapsed ? 'Bedienpanel ausklappen' : 'Bedienpanel einklappen');
-  };
-}
-
-let windFlowLoading = false;
-const windFlowHint = ui.chkWindFlow?.closest('.row')?.querySelector('.hint');
-const windFlowHintText = windFlowHint?.textContent ?? '';
-if(ui.chkWindFlow){
-  ui.chkWindFlow.onchange = async ()=>{
-    if(ui.chkWindFlow.checked){
-      if(windFlowLoading) return;
-      windFlowLoading = true;
-      ui.chkWindFlow.disabled = true;
-      if(windFlowHint) windFlowHint.textContent = 'lädt…';
-      try{
-        await setWindFlow(L, map, true);
-      }catch(err){
-        console.warn('Windströmung konnte nicht geladen werden:', err);
-        alert('Windströmung konnte nicht geladen werden.');
-        ui.chkWindFlow.checked = false;
-      }finally{
-        windFlowLoading = false;
-        ui.chkWindFlow.disabled = false;
-        if(windFlowHint) windFlowHint.textContent = windFlowHintText;
-      }
-    }else{
-      setWindFlow(L, map, false);
-    }
   };
 }
 
