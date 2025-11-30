@@ -1,0 +1,18 @@
+[
+  { "rs": "010000000000", "name": "Schleswig-Holstein" },
+  { "rs": "020000000000", "name": "Hamburg" },
+  { "rs": "030000000000", "name": "Niedersachsen" },
+  { "rs": "040000000000", "name": "Bremen" },
+  { "rs": "050000000000", "name": "Nordrhein-Westfalen" },
+  { "rs": "060000000000", "name": "Hessen" },
+  { "rs": "070000000000", "name": "Rheinland-Pfalz" },
+  { "rs": "080000000000", "name": "Baden-Württemberg" },
+  { "rs": "090000000000", "name": "Bayern" },
+  { "rs": "100000000000", "name": "Saarland" },
+  { "rs": "110000000000", "name": "Berlin" },
+  { "rs": "120000000000", "name": "Brandenburg" },
+  { "rs": "130000000000", "name": "Mecklenburg-Vorpommern" },
+  { "rs": "140000000000", "name": "Sachsen" },
+  { "rs": "150000000000", "name": "Sachsen-Anhalt" },
+  { "rs": "160000000000", "name": "Thüringen" }
+]
