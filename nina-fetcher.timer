@@ -1,0 +1,10 @@
+[Unit]
+Description=Run nina-fetcher.service every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+Unit=nina-fetcher.service
+
+[Install]
+WantedBy=timers.target

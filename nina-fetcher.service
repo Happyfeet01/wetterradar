@@ -1,0 +1,13 @@
+[Unit]
+Description=Fetch active NINA/BBK warnings as GeoJSON
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+WorkingDirectory=/var/www/wetterradar
+ExecStart=/usr/bin/node nina-fetcher.js
+
+[Install]
+WantedBy=multi-user.target
