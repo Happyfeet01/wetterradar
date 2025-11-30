@@ -46,6 +46,7 @@ export function paint(L, map, ui, syncCloudsCb){
   ui.lblOpacity.textContent = Math.round(op*100) + '%';
 
   requestAnimationFrame(()=>{
+    if(!next) return;
     next.setOpacity(op);
     if(!curr){ curr=next; next=null; return; }
     curr.setOpacity(0);
