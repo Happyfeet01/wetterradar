@@ -4,6 +4,7 @@ import * as Sat from './satellite.js';
 import { bind as bindWarnings } from './warnings.js';
 import { bindWindFlow } from './windflow.js';
 import { initNinaWarnings } from './nina.js';
+import { bind as bindLightning } from './lightning.js';
 
 const map = L.map('map', { zoomSnap:0.5, worldCopyJump:true, maxZoom:10 }).setView([51.2,10.5], 6);
 const baseTiles = {
@@ -37,6 +38,7 @@ const ui = {
   chkClouds:$('chkClouds'), rngClouds:$('rngClouds'), lblClouds:$('lblClouds'),
   chkWarn:$('chkWarn'), chkWarnList:$('chkWarnList'),
   chkNina:$('chkNina'),
+  chkLightning:$('chkLightning'),
   chkDark:$('chkDark'),
   chkWindFlow:$('chkWindFlow'),
   controlPanel:$('controlPanel'),
@@ -47,6 +49,7 @@ const ui = {
 bindWarnings(L, map, ui);
 initNinaWarnings(L, map, ui);
 bindWindFlow(L, map, ui);
+bindLightning(L, map, ui);
 
 if(ui.btnPanelToggle && ui.controlPanel){
   ui.btnPanelToggle.onclick = ()=>{
