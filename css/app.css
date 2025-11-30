@@ -8,6 +8,23 @@ body.dark{
   background:#000; color:var(--fg-text);
 }
 html,body,#map{height:100%;margin:0}
+body.dark #map{background:#000;}
+
+.leaflet-control-attribution{
+  background:rgba(255,255,255,0.85);
+  color:#000;
+}
+.leaflet-control-attribution a{color:inherit;}
+body.dark .leaflet-bar a{
+  background:rgba(0,0,0,0.6);
+  color:#eee;
+  border-color:rgba(255,255,255,0.25);
+}
+body.dark .leaflet-control-attribution{
+  background:rgba(0,0,0,0.65);
+  color:#eee;
+}
+body.dark .leaflet-control-attribution a{color:#bbdefb;}
 
 /* Panel unten links */
 .panel{
