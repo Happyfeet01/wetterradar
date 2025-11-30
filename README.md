@@ -110,3 +110,27 @@ WantedBy=multi-user.target
 - Beim Upload/Sync der statischen Seite muss der neue Ordner `wind/` mitgenommen werden (z. B. `rsync -av --delete css js wind index.html …`).
 - Auf dem Server sollten Schreibrechte für den Fetcher auf `/var/www/wetterradar/wind/current.json` bestehen.
 - Die Beispiel-Nginx-Config (siehe `etc/nginx/sites-available/wetter.domain.tld`) enthält einen Location-Block für `/wind/`, der Caching + CORS-Header setzt.
+
+## NINA/BBK-Warnungen automatisiert aktualisieren
+
+- **Fetcher:** `nina-fetcher.js` lädt die aktiven NINA/BBK-Warnungen und schreibt sie als `warnings/nina.json` (GeoJSON FeatureCollection) ins Webroot.
+- **systemd-Units im Repo:**
+  - `nina-fetcher.service` – einmaliger Lauf (oneshot), führt `node nina-fetcher.js` im Projektverzeichnis aus.
+  - `nina-fetcher.timer` – startet den Service alle 5 Minuten (`OnCalendar=*:0/5`, `Persistent=true`).
+- **Einrichtung (Beispiel /var/www/wetterradar):**
+
+  ```bash
+  # Dateien nach /etc/systemd/system kopieren (Pfad/User bei Bedarf anpassen)
+  sudo cp nina-fetcher.service nina-fetcher.timer /etc/systemd/system/
+
+  sudo systemctl daemon-reload
+
+  # Timer aktivieren und sofort starten
+  sudo systemctl enable --now nina-fetcher.timer
+
+  # Ad-hoc-Lauf, falls sofortige Aktualisierung gewünscht
+  sudo systemctl start nina-fetcher.service
+  ```
+
+- **Pfad/User anpassen:** In `nina-fetcher.service` `WorkingDirectory`, `User` und ggf. `ExecStart` (Pfad zu Node.js) auf die lokale Installation abstimmen.
+- **Status/Logs prüfen:** `systemctl status nina-fetcher.timer` bzw. `journalctl -u nina-fetcher.service -e` zeigt, ob die Fetches erfolgreich laufen.
