@@ -90,20 +90,50 @@ export function bindWindFlow(L, map, ui) {
     const bounds = raw?.meta?.bounds;
     const grid = raw?.meta?.grid;
     const refTime = raw?.meta?.datasetTime;
-    const u = Array.isArray(raw?.u) ? raw.u : null;
-    const v = Array.isArray(raw?.v) ? raw.v : null;
+
+    const fromUvArrays = Array.isArray(raw?.u) && Array.isArray(raw?.v);
+    const fromDataArray = Array.isArray(raw?.data) && raw.data.length >= 2;
+
+    let u = null;
+    let v = null;
+    let headerOverride = null;
+
+    if (fromUvArrays) {
+      u = raw.u;
+      v = raw.v;
+    } else if (fromDataArray) {
+      const [uLayer, vLayer] = raw.data;
+      u = Array.isArray(uLayer?.data) ? uLayer.data : null;
+      v = Array.isArray(vLayer?.data) ? vLayer.data : null;
+      const uHeader = uLayer?.header;
+      const vHeader = vLayer?.header;
+      if (uHeader && vHeader) {
+        headerOverride = {
+          lo1: Number(uHeader.lo1),
+          lo2: Number(uHeader.lo2),
+          la1: Number(uHeader.la1),
+          la2: Number(uHeader.la2),
+          nx: Number(uHeader.nx),
+          ny: Number(uHeader.ny),
+          dx: Number(uHeader.dx),
+          dy: Number(uHeader.dy),
+          refTime: refTime || uHeader.refTime || vHeader.refTime
+        };
+      }
+    }
 
     if (!bounds || !grid || !u || !v) {
       console.error('Winddaten unvollständig oder fehlerhaft.');
       return null;
     }
 
-    const west = Number(bounds.west);
-    const east = Number(bounds.east);
-    const north = Number(bounds.north);
-    const south = Number(bounds.south);
-    const dx = Number(grid.longitudeStep);
-    const dy = Number(grid.latitudeStep);
+    const west = Number(headerOverride?.lo1 ?? bounds.west);
+    const east = Number(headerOverride?.lo2 ?? bounds.east);
+    const north = Number(headerOverride?.la1 ?? bounds.north);
+    const south = Number(headerOverride?.la2 ?? bounds.south);
+    const dx = Number(headerOverride?.dx ?? grid.longitudeStep);
+    const dy = Number(headerOverride?.dy ?? grid.latitudeStep);
+    const ref = headerOverride?.refTime || refTime;
 
     if (![west, east, north, south, dx, dy].every(Number.isFinite) || dx === 0 || dy === 0) {
       console.error('Ungültige Bounds/Grid in den Winddaten.');
@@ -129,7 +159,7 @@ export function bindWindFlow(L, map, ui) {
       la2: south,
       dx,
       dy,
-      refTime: refTime || new Date().toISOString()
+      refTime: ref || new Date().toISOString()
     };
 
     // leaflet-velocity erwartet ein Array aus U- und V-Komponente
