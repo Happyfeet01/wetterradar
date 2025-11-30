@@ -36,7 +36,10 @@ export function paint(L, map, ui, syncCloudsCb){
   if(next){ map.removeLayer(next); next=null; }
   next = L.tileLayer(radarUrl(f, ui), {
     pane:'radarPane', tileSize:RADAR_SIZE, opacity:0, className:'rv-tiles',
-    updateWhenZooming:false, updateWhenIdle:true, keepBuffer:4, attribution:'Radar © RainViewer'
+    updateWhenZooming:false, updateWhenIdle:true, keepBuffer:4, attribution:'Radar © RainViewer',
+    // Ohne noWrap springt die Weltkopie-Logik und der Strom-Film "dreht" sich sichtbar
+    noWrap:true,
+    bounds:L.latLngBounds([-85, -180], [85, 180]),
   }).addTo(map);
 
   const dt=new Date(f.time*1000);
