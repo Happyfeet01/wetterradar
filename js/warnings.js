@@ -38,7 +38,9 @@ export function bind(L, map, ui){
   }
 
   map.on('moveend', ()=>{
-    renderWarnings();
+    if (isBoundsFilterActive()){
+      renderWarnings();
+    }
   });
 
   // --- WMS Toggle ---
@@ -283,17 +285,7 @@ function isWarningInsideBounds(warning, bounds){
   if (!coords) return false;
 
   const { lat, lon } = coords;
-  const south = bounds.getSouth();
-  const north = bounds.getNorth();
-  const west = bounds.getWest();
-  const east = bounds.getEast();
-
-  if (east < west){
-    const withinLon = lon >= west || lon <= east;
-    return withinLon && lat >= south && lat <= north;
-  }
-
-  return lat >= south && lat <= north && lon >= west && lon <= east;
+  return bounds.contains([lat, lon]);
 }
 
 function extractCoordinates(warning){
