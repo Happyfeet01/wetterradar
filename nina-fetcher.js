@@ -298,7 +298,7 @@ function mergeFeatures(identifier, detail, geoFeatures) {
 async function writeAtomic(filePath, payload) {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
-  const tmpPath = path.join(dir, `${path.basename(filePath)}.tmp`);
+  const tmpPath = path.join(dir, `${GEOJSON_FILENAME}.tmp`);
   await fs.writeFile(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
   await fs.chmod(tmpPath, 0o644);
   await fs.rename(tmpPath, filePath);
@@ -313,24 +313,12 @@ async function buildFeatureCollection(features) {
 
 async function main() {
   const arsList = await loadArsList();
-  log(`Starte Dashboard-Abruf für ${arsList.length} Regionalschlüssel.`);
-
-  if (!arsList.length) {
-    warn('Keine Regionalschlüssel verfügbar – es wird eine leere FeatureCollection geschrieben.');
-    const payload = await buildFeatureCollection([]);
-    await writeAtomic(OUTPUT_FILE, payload);
-    log(`Leere Datei geschrieben: ${OUTPUT_FILE}`);
-    return;
-  }
-
   const identifiers = new Set();
 
   for (const ars of arsList) {
     const dashboard = await fetchDashboard(ars);
     collectIdentifiersFromDashboard(dashboard).forEach((id) => identifiers.add(id));
   }
-
-  log(`Gefundene Warnungs-IDs nach Dashboard-Scan: ${identifiers.size}`);
 
   if (!identifiers.size) {
     warn('Keine aktiven Warnungen gefunden – es wird eine leere FeatureCollection geschrieben.');
