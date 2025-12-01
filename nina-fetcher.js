@@ -19,7 +19,6 @@ const OUTPUT_FILE = path.resolve(process.env.NINA_OUTPUT_FILE || '/var/www/wette
 const USER_AGENT = process.env.NINA_USER_AGENT || 'wetterradar/1.0';
 const REQUEST_TIMEOUT = Math.max(5_000, Number(process.env.NINA_REQUEST_TIMEOUT_MS) || 10_000);
 const RETRY_DELAY = Math.max(250, Number(process.env.NINA_RETRY_DELAY_MS) || 750);
-const GEOJSON_FILENAME = 'nina.geojson';
 
 function log(message, ...rest) {
   console.log(`[nina] ${message}`, ...rest);

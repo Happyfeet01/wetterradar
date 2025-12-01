@@ -214,7 +214,7 @@ export function initNinaWarnings(L, map, ui){
     loading = true;
     setLoading('Lade…');
     try{
-      const res = await fetch('/warnings/nina.json', { cache: 'no-store' });
+      const res = await fetch('/warnings/nina.geojson', { cache: 'no-store' });
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if(!Array.isArray(json?.features)) throw new Error('Unerwartetes Format');
