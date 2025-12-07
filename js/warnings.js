@@ -177,7 +177,13 @@ function buildDwdLayer(features){
     style: feature => {
       const sev = parseSeverity(feature?.properties);
       const color = WARNING_LEVEL_COLORS[sev] || '#b3b3b3';
-      return { color, weight:1.2, fillOpacity:0.3, fillColor:color };
+      return {
+        color,
+        weight: 1.2,
+        opacity: 0.9,
+        fillOpacity: 0.45,
+        fillColor: color
+      };
     },
     onEachFeature: (feature, layer)=>{
       layer.on('click', ()=>{
