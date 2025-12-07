@@ -222,18 +222,14 @@ function refreshSidebar(){
   if (!mapRef) return;
   const visibleWarnings = allDwdFeatures.filter(f => f?.geometry && mapRef.getBounds().intersects(leafletRef.geoJSON(f).getBounds()));
   updateDwdSidebar(visibleWarnings);
-  const hasAny = visibleWarnings.length > 0 || (dom.chkNina?.checked && ninaFeatures.length > 0);
-  if (hasAny){
-    setSidebarVisibility(true);
-  }else{
-    setSidebarVisibility(false);
-  }
+  const wantsSidebar = Boolean(dom.chkWarnList?.checked);
+  setSidebarVisibility(wantsSidebar, { syncCheckbox:false });
 }
 
-function setSidebarVisibility(show){
+function setSidebarVisibility(show, { syncCheckbox = true } = {}){
   if (!dom.listBox) return;
   dom.listBox.style.display = show ? 'block' : 'none';
-  if (dom.chkWarnList){
+  if (syncCheckbox && dom.chkWarnList){
     dom.chkWarnList.checked = show;
   }
 }
