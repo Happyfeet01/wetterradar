@@ -10,6 +10,9 @@ const WARNING_LEVEL_COLORS = {
 let mapInstance = null;
 let cachedWarnings = [];
 let filterUsesBounds = true;
+let ninaLayer = null;
+let ninaWarnings = [];
+let ninaFetchPromise = null;
 
 export function bind(L, map, ui){
   mapInstance = map;
@@ -44,20 +47,33 @@ export function bind(L, map, ui){
   // --- WMS Toggle ---
   function toggleWms(on){
     if(on){
-      if(wms){ wms.addTo(map); return; }
-      wms = L.tileLayer.wms(DWD_WMS, {
-        pane:'warnPane',
-        layers:DWD_WMS_LAYER,
-        version:'1.3.0',
-        crs:L.CRS.EPSG3857,
-        format:'image/png',
-        transparent:true,
-        tiled:true,
-        opacity:0.75,
-        attribution:'Warnungen © DWD'
-      }).addTo(map);
+      if(wms){ wms.addTo(map); } else {
+        wms = L.tileLayer.wms(DWD_WMS, {
+          pane:'warnPane',
+          layers:DWD_WMS_LAYER,
+          version:'1.3.0',
+          crs:L.CRS.EPSG3857,
+          format:'image/png',
+          transparent:true,
+          tiled:true,
+          opacity:0.75,
+          attribution:'Warnungen © DWD'
+        }).addTo(map);
+      }
+      ensureNinaLayer();
     } else if (wms){
       map.removeLayer(wms);
+      if (ninaLayer){
+        map.removeLayer(ninaLayer);
+      }
+    }
+  }
+
+  async function ensureNinaLayer(){
+    const warnings = await loadNinaWarnings().catch(() => []);
+    ninaWarnings = warnings;
+    if (ninaLayer){
+      ninaLayer.addTo(map);
     }
   }
 
@@ -105,8 +121,8 @@ export function bind(L, map, ui){
   // --- Banner nur aktualisieren (ohne Liste zu rendern) ---
   async function refreshBannerOnly(){
     try{
-      const js  = await fetchWarningsJson();
-      const all = Object.values(js?.warnings || {}).flat();
+      const [js, nina]  = await Promise.all([fetchWarningsJson(), loadNinaWarnings().catch(() => [])]);
+      const all = Object.values(js?.warnings || {}).flat().concat(nina);
       const banner = document.getElementById('noWarnBanner');
       if (banner) banner.style.display = all.length ? 'none' : 'block';
     }catch(e){
@@ -119,8 +135,8 @@ export function bind(L, map, ui){
   // --- Liste + Banner rendern ---
   async function refreshList(){
     try{
-      const js   = await fetchWarningsJson();
-      const all  = Object.values(js?.warnings || {}).flat();
+      const [js, nina] = await Promise.all([fetchWarningsJson(), loadNinaWarnings().catch(() => [])]);
+      const all  = Object.values(js?.warnings || {}).flat().concat(Array.isArray(nina) ? nina : []);
 
       const banner = document.getElementById('noWarnBanner');
       if (banner) banner.style.display = all.length ? 'none' : 'block';
@@ -149,6 +165,91 @@ export function bind(L, map, ui){
   refreshBannerOnly();
   // Liste erst laden, wenn aktiv
   if (ui.chkWarnList?.checked) refreshList();
+}
+
+async function loadNinaWarnings(){
+  if (ninaFetchPromise){
+    return ninaFetchPromise;
+  }
+
+  ninaFetchPromise = (async ()=>{
+    try{
+      const res = await fetch('/warnings/nina.geojson', { cache:'no-cache' });
+      if (!res.ok){
+        throw new Error(`NINA GeoJSON ${res.status}`);
+      }
+      const data = await res.json();
+      const features = Array.isArray(data?.features) ? data.features : [];
+      const warnings = features.map(featureToWarning).filter(Boolean);
+      ninaWarnings = warnings;
+
+      if (ninaLayer){
+        try { mapInstance?.removeLayer(ninaLayer); } catch {}
+      }
+
+      if (mapInstance){
+        ninaLayer = buildNinaLayer(features);
+        if (ninaLayer && document.getElementById('chkWarn')?.checked){
+          ninaLayer.addTo(mapInstance);
+        }
+      }
+
+      return warnings;
+    }catch(err){
+      console.warn('NINA warnings failed:', err);
+      return [];
+    }
+  })();
+
+  return ninaFetchPromise.finally(() => {
+    ninaFetchPromise = null;
+  });
+}
+
+function buildNinaLayer(features){
+  if (!Array.isArray(features)) return null;
+  return L.geoJSON(features, {
+    pane:'warnPane',
+    style: (feature)=>({
+      color: '#555',
+      weight: 1,
+      fillOpacity: 0.35,
+      fillColor: WARNING_LEVEL_COLORS[Number(feature?.properties?.severity) || 0] || '#b3b3b3'
+    }),
+    onEachFeature: (feature, layer)=>{
+      const props = feature?.properties || {};
+      const title = props.headline || props.event || 'Warnung';
+      const desc = props.description || '';
+      const time = formatTimeRange(props.onset || props.effective, props.expires);
+      const content = `<div class="warn-popup"><strong>${title}</strong><br>${props.provider || 'NINA'}${props.regionName ? ' – ' + props.regionName : ''}<br>${time || ''}<br>${(desc || '').replace(/\n/g,'<br>')}</div>`;
+      layer.on('click', ()=>{
+        layer.bindPopup(content).openPopup();
+      });
+    }
+  });
+}
+
+function featureToWarning(feature){
+  if (!feature || typeof feature !== 'object') return null;
+  const props = feature.properties || {};
+  const center = geometryCenter(feature.geometry) || props.centroid;
+  return {
+    id: props.id,
+    level: Number(props.severity) || 0,
+    severity: Number(props.severity) || 0,
+    headline: props.headline || props.event || 'Warnung',
+    description: props.description || '',
+    provider: props.provider || props.source,
+    source: props.source || 'NINA',
+    regionName: props.regionName || props.rs,
+    event: props.event,
+    category: props.category,
+    start: props.onset || props.effective,
+    end: props.expires,
+    geometry: feature.geometry,
+    lat: center?.lat ?? null,
+    lon: center?.lon ?? null
+  };
 }
 
 export function renderWarnings(warnings){
@@ -194,6 +295,10 @@ export function createWarningCard(warning){
   const metaParts = [];
   if (Number.isFinite(level) && level > 0){
     metaParts.push(`Stufe ${level}`);
+  }
+  const provider = (warning?.provider || warning?.source || '').trim();
+  if (provider){
+    metaParts.push(provider);
   }
   const region = (warning?.regionName || warning?.area || warning?.region || '').trim();
   if (region){
@@ -299,6 +404,9 @@ function isWarningInsideBounds(warning, bounds){
 function extractCoordinates(warning){
   if (!warning || typeof warning !== 'object') return null;
 
+  const centroid = geometryCenter(warning.geometry || warning);
+  if (centroid) return centroid;
+
   const lat = pickNumeric([
     warning.lat,
     warning.latitude,
@@ -309,6 +417,9 @@ function extractCoordinates(warning){
     warning?.coord?.[1],
     warning?.geometry?.coordinates?.[1],
     warning?.geometry?.coordinates?.[0]?.[1],
+    Array.isArray(warning?.geometry?.coordinates?.[0]) && Array.isArray(warning?.geometry?.coordinates?.[0][0])
+      ? warning.geometry.coordinates[0][0][1]
+      : undefined,
     Array.isArray(warning?.geometry?.geometries)
       ? warning.geometry.geometries[0]?.coordinates?.[1]
       : undefined
@@ -326,6 +437,9 @@ function extractCoordinates(warning){
     warning?.coord?.[0],
     warning?.geometry?.coordinates?.[0],
     warning?.geometry?.coordinates?.[0]?.[0],
+    Array.isArray(warning?.geometry?.coordinates?.[0]) && Array.isArray(warning?.geometry?.coordinates?.[0][0])
+      ? warning.geometry.coordinates[0][0][0]
+      : undefined,
     Array.isArray(warning?.geometry?.geometries)
       ? warning.geometry.geometries[0]?.coordinates?.[0]
       : undefined
@@ -356,6 +470,40 @@ function parseCoordinate(value){
 
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function geometryCenter(geometry){
+  if (!geometry || typeof geometry !== 'object') return null;
+  if (geometry.type === 'Point' && Array.isArray(geometry.coordinates)){
+    const [lon, lat] = geometry.coordinates;
+    if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
+  }
+
+  const coords = geometry.type === 'Polygon'
+    ? geometry.coordinates?.[0]
+    : geometry.type === 'MultiPolygon'
+      ? geometry.coordinates?.[0]?.[0]
+      : null;
+
+  if (Array.isArray(coords) && coords.length){
+    let sumLat = 0;
+    let sumLon = 0;
+    let count = 0;
+    coords.forEach(pair => {
+      if (Array.isArray(pair) && pair.length >= 2){
+        const [lon, lat] = pair;
+        if (Number.isFinite(lat) && Number.isFinite(lon)){
+          sumLat += lat;
+          sumLon += lon;
+          count += 1;
+        }
+      }
+    });
+    if (count){
+      return { lat: sumLat / count, lon: sumLon / count };
+    }
+  }
+  return null;
 }
 
 function isBoundsFilterActive(){
