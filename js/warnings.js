@@ -268,17 +268,29 @@ function renderEmpty(target, text){
 
 function createCard(warning, onClick){
   const card = document.createElement('div');
-  card.className = 'warn-card';
-  card.style.borderLeftColor = WARNING_LEVEL_COLORS[warning.severity] || '#b3b3b3';
+  const sev = warning.severity || 0;
+  const sevColor = WARNING_LEVEL_COLORS[sev] || '#b3b3b3';
+  card.className = `warn-card warn-card--sev-${sev}`;
+  card.style.borderLeftColor = sevColor;
   card.onclick = onClick;
+
+  const header = document.createElement('div');
+  header.className = 'warn-card__header';
 
   const title = document.createElement('div');
   title.className = 'warn-card__headline';
   title.textContent = warning.title || 'Warnung';
-  card.appendChild(title);
+  if (sev){
+    const sevBadge = document.createElement('span');
+    sevBadge.className = `warn-card__severity warn-card__severity--${sev}`;
+    sevBadge.textContent = `Stufe ${sev}`;
+    sevBadge.style.backgroundColor = sevColor;
+    header.appendChild(sevBadge);
+  }
+  header.appendChild(title);
+  card.appendChild(header);
 
   const metaParts = [];
-  if (warning.severity) metaParts.push(`Stufe ${warning.severity}`);
   if (warning.source) metaParts.push(warning.source);
   if (warning.area) metaParts.push(warning.area);
   if (warning.timeframe) metaParts.push(warning.timeframe);
