@@ -91,22 +91,32 @@ body.dark .badge{background:rgba(33,150,243,0.35);color:#e3f2fd;}
   z-index:1001;
   background:var(--bg-panel); color:var(--fg-text);
   padding:8px 10px; border-radius:8px;
-  max-width:min(48vw,420px); max-height:40vh; overflow:auto;
+  max-width:min(48vw,420px); max-height:50vh; overflow:hidden;
   font:13px system-ui;
+  box-shadow:0 4px 12px rgba(0,0,0,0.15);
 }
 .warnlist .title{font-weight:600;margin-bottom:6px}
-.warn-card{border-left:6px solid #ddd; padding:6px 8px; margin:6px 0; background:rgba(0,0,0,0.03); border-radius:6px}
-
-/* Banner oben mittig */
-.banner{
-  position:absolute; left:50%; transform:translateX(-50%);
-  top:max(10px,env(safe-area-inset-top));
-  z-index:1100;
-  background:var(--bg-panel); color:var(--fg-text);
-  padding:6px 10px; border-radius:8px; font:13px system-ui;
-  box-shadow:0 2px 8px rgba(0,0,0,.12);
-  display:none;
+.warnlist-tabs{display:flex;gap:6px;margin-bottom:8px;}
+.warnlist .tab{
+  flex:1 1 0;
+  padding:6px 8px;
+  border:1px solid rgba(0,0,0,0.12);
+  border-radius:6px;
+  background:rgba(0,0,0,0.05);
+  color:inherit;
+  cursor:pointer;
+  font-weight:700;
 }
+.warnlist .tab.active{
+  background:#1976d2;
+  color:#fff;
+  border-color:#1976d2;
+}
+.warnlist-panel{max-height:42vh; overflow:auto;}
+.warn-card{border-left:6px solid #ddd; padding:6px 8px; margin:6px 0; background:rgba(0,0,0,0.03); border-radius:6px}
+.warn-card:hover{background:rgba(0,0,0,0.05); cursor:pointer;}
+.warn-card__meta{margin:4px 0;}
+.warn-card__description{white-space:pre-line;}
 
 /* Footer (klein, oben links) – optional */
 .footer{

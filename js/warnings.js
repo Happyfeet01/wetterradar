@@ -1,5 +1,6 @@
 // warnings.js
-import { DWD_WMS, DWD_WMS_LAYER, DWD_WARN_JSON } from './config.js';
+// Aktualisierte Warnlogik: DWD-Polygone + BBK/NINA mit Sidebar und Tab-Navigation.
+import { DWD_WFS } from './config.js';
 
 const WARNING_LEVEL_COLORS = {
   1: '#ffff00',
@@ -7,308 +8,284 @@ const WARNING_LEVEL_COLORS = {
   3: '#ff0000',
   4: '#800080'
 };
-let mapInstance = null;
-let cachedWarnings = [];
-let filterUsesBounds = true;
+
+let mapRef = null;
+let leafletRef = null;
+let dwdLayer = null;
 let ninaLayer = null;
-let ninaWarnings = [];
-let ninaFetchPromise = null;
+let allDwdFeatures = [];
+let ninaFeatures = [];
+let sidebarTimer = null;
+
+// DOM-Referenzen
+const dom = {
+  listBox: null,
+  tabs: null,
+  panelDwd: null,
+  panelNina: null,
+  listDwd: null,
+  listNina: null,
+  chkWarnList: null,
+  chkDwd: null,
+  chkNina: null
+};
 
 export function bind(L, map, ui){
-  mapInstance = map;
+  leafletRef = L;
+  mapRef = map;
 
-  // --- Pane für Warn-Layer (über Radar/Wolken) ---
+  // Pane für Warnlayer oberhalb der Wolken
   map.createPane('warnPane');
   map.getPane('warnPane').style.zIndex = 510;
 
-  let wms = null;
+  // Sammle DOM-Elemente einmalig
+  dom.listBox = document.getElementById('warnList');
+  dom.tabs = {
+    dwd: document.getElementById('tabDwd'),
+    nina: document.getElementById('tabNina')
+  };
+  dom.panelDwd = document.getElementById('panelDwd');
+  dom.panelNina = document.getElementById('panelNina');
+  dom.listDwd = document.getElementById('warnItemsDwd');
+  dom.listNina = document.getElementById('warnItemsNina');
+  dom.chkWarnList = ui.chkWarnList;
+  dom.chkDwd = ui.chkWarn;
+  dom.chkNina = document.getElementById('chkNina');
 
-  // --- UI-Handler ---
-  if (ui.chkWarn){
-    ui.chkWarn.onchange = ()=> toggleWms(ui.chkWarn.checked);
+  // Checkboxen + Tabs binden (persistente Auswahl)
+  bindCheckbox(dom.chkDwd, 'chkWarn', toggleDwdLayer);
+  bindCheckbox(dom.chkNina, 'chkNina', toggleNinaLayer);
+  bindCheckbox(dom.chkWarnList, 'chkWarnList', setSidebarVisibility);
+  bindTabs();
+
+  // Bewegungen des Kartenfensters leicht entprellt auswerten
+  const debouncedSidebar = debounce(refreshSidebar, 140);
+  map.on('moveend zoomend', debouncedSidebar);
+
+  // Initiale Daten laden + Layer ggf. direkt einschalten
+  loadDwdWarnings();
+  if (dom.chkDwd?.checked) toggleDwdLayer(true);
+  loadNinaWarnings();
+  if (dom.chkNina?.checked) toggleNinaLayer(true);
+}
+
+function bindCheckbox(el, storageKey, onChange){
+  if (!el) return;
+  const stored = localStorage.getItem(storageKey);
+  if (stored !== null){
+    el.checked = stored === '1';
   }
-  if (ui.chkWarnList){
-    ui.chkWarnList.onchange = ()=>{
-      const box = document.getElementById('warnList');
-      box.style.display = ui.chkWarnList.checked ? 'block' : 'none';
-      if (ui.chkWarnList.checked) refreshList();
-    };
+  el.onchange = ()=>{
+    localStorage.setItem(storageKey, el.checked ? '1' : '0');
+    if (typeof onChange === 'function') onChange(el.checked);
+  };
+}
+
+function debounce(fn, wait = 120){
+  return (...args) => {
+    if (sidebarTimer) clearTimeout(sidebarTimer);
+    sidebarTimer = setTimeout(() => fn(...args), wait);
+  };
+}
+
+function bindTabs(){
+  if (dom.tabs?.dwd){
+    dom.tabs.dwd.onclick = ()=> activateTab('dwd');
   }
-
-  const chkWarnInView = document.getElementById('chkWarnInView');
-  if (chkWarnInView){
-    chkWarnInView.onchange = ()=> renderWarnings();
+  if (dom.tabs?.nina){
+    dom.tabs.nina.onclick = ()=> activateTab('nina');
   }
+}
 
-  map.on('moveend', ()=>{
-    renderWarnings();
-  });
+function activateTab(name){
+  const isDwd = name === 'dwd';
+  dom.tabs?.dwd?.classList.toggle('active', isDwd);
+  dom.tabs?.nina?.classList.toggle('active', !isDwd);
+  dom.tabs?.dwd?.setAttribute('aria-selected', isDwd ? 'true' : 'false');
+  dom.tabs?.nina?.setAttribute('aria-selected', !isDwd ? 'true' : 'false');
+  if (dom.panelDwd) dom.panelDwd.hidden = !isDwd;
+  if (dom.panelNina) dom.panelNina.hidden = isDwd;
+}
 
-  // --- WMS Toggle ---
-  function toggleWms(on){
-    if(on){
-      if(wms){ wms.addTo(map); } else {
-        wms = L.tileLayer.wms(DWD_WMS, {
-          pane:'warnPane',
-          layers:DWD_WMS_LAYER,
-          version:'1.3.0',
-          crs:L.CRS.EPSG3857,
-          format:'image/png',
-          transparent:true,
-          tiled:true,
-          opacity:0.75,
-          attribution:'Warnungen © DWD'
-        }).addTo(map);
-      }
-      ensureNinaLayer();
-    } else if (wms){
-      map.removeLayer(wms);
-      if (ninaLayer){
-        map.removeLayer(ninaLayer);
-      }
+async function loadDwdWarnings(){
+  try{
+    const res = await fetch(DWD_WFS, { cache:'no-store' });
+    if (!res.ok) throw new Error(`DWD WFS ${res.status}`);
+    const data = await res.json();
+    const features = Array.isArray(data?.features) ? data.features : [];
+    allDwdFeatures = features;
+    dwdLayer = buildDwdLayer(features);
+    if (dom.chkDwd?.checked && dwdLayer){
+      dwdLayer.addTo(mapRef);
     }
+    refreshSidebar();
+  }catch(err){
+    console.warn('DWD warnings failed:', err);
+    renderEmpty(dom.listDwd, 'Warnungen konnten nicht geladen werden.');
   }
-
-  async function ensureNinaLayer(){
-    const warnings = await loadNinaWarnings().catch(() => []);
-    ninaWarnings = warnings;
-    if (ninaLayer){
-      ninaLayer.addTo(map);
-    }
-  }
-
-  // --- JSONP Loader für DWD WARNUNGEN (Firefox-sicher) ---
-  function loadJsonp(src, timeoutMs = 8000){
-    return new Promise((resolve, reject) => {
-      let done = false, timer = null, tag = null;
-
-      // DWD ruft warnWetter.loadWarnings({...}) auf
-      window.warnWetter = {
-        loadWarnings: (data) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          cleanup();
-          resolve(data);
-        }
-      };
-
-      function cleanup(){
-        try { if (tag && tag.parentNode) tag.parentNode.removeChild(tag); } catch {}
-        try { delete window.warnWetter; } catch {}
-      }
-
-      tag = document.createElement('script');
-      tag.src = src + (src.includes('?') ? '&' : '?') + '_=' + Date.now(); // Cache-Buster
-      tag.async = true;
-      tag.onerror = () => { if (done) return; done = true; clearTimeout(timer); cleanup(); reject(new Error('JSONP load failed')); };
-      document.head.appendChild(tag);
-
-      timer = setTimeout(() => {
-        if (done) return;
-        done = true; cleanup();
-        reject(new Error('JSONP timeout'));
-      }, timeoutMs);
-    });
-  }
-
-  async function fetchWarningsJson(){
-    // Achtung: DWD liefert JSONP, nicht pures JSON
-    const data = await loadJsonp(DWD_WARN_JSON);
-    return data; // hat Felder: { time, warnings: { <id>: [warnObj, ...], ... }, ... }
-  }
-
-  // --- Banner nur aktualisieren (ohne Liste zu rendern) ---
-  async function refreshBannerOnly(){
-    try{
-      const [js, nina]  = await Promise.all([fetchWarningsJson(), loadNinaWarnings().catch(() => [])]);
-      const all = Object.values(js?.warnings || {}).flat().concat(nina);
-      const banner = document.getElementById('noWarnBanner');
-      if (banner) banner.style.display = all.length ? 'none' : 'block';
-    }catch(e){
-      const banner = document.getElementById('noWarnBanner');
-      if (banner) banner.style.display = 'block';
-      console.warn('DWD banner update failed:', e);
-    }
-  }
-
-  // --- Liste + Banner rendern ---
-  async function refreshList(){
-    try{
-      const [js, nina] = await Promise.all([fetchWarningsJson(), loadNinaWarnings().catch(() => [])]);
-      const all  = Object.values(js?.warnings || {}).flat().concat(Array.isArray(nina) ? nina : []);
-
-      const banner = document.getElementById('noWarnBanner');
-      if (banner) banner.style.display = all.length ? 'none' : 'block';
-
-      renderWarnings(all);
-    }catch(e){
-      console.warn('DWD warnings failed:', e);
-      cachedWarnings = [];
-
-      const banner = document.getElementById('noWarnBanner');
-      if (banner) banner.style.display = 'block';
-
-      const root = document.getElementById('warnItems');
-      if (root){
-        root.style.maxHeight = '300px';
-        root.style.overflowY = 'auto';
-        root.innerHTML = '<div class="hint">Warnungen konnten nicht geladen werden.</div>';
-      }
-    }
-  }
-
-  // --- regelmäßige Aktualisierung ---
-  setInterval(()=>{ refreshBannerOnly(); if(document.getElementById('warnList')?.style.display==='block') refreshList(); }, 5*60*1000);
-
-  // initial
-  refreshBannerOnly();
-  // Liste erst laden, wenn aktiv
-  if (ui.chkWarnList?.checked) refreshList();
 }
 
 async function loadNinaWarnings(){
-  if (ninaFetchPromise){
-    return ninaFetchPromise;
-  }
-
-  ninaFetchPromise = (async ()=>{
-    try{
-      const res = await fetch('/warnings/nina.geojson', { cache:'no-cache' });
-      if (!res.ok){
-        throw new Error(`NINA GeoJSON ${res.status}`);
-      }
-      const data = await res.json();
-      const features = Array.isArray(data?.features) ? data.features : [];
-      const warnings = features.map(featureToWarning).filter(Boolean);
-      ninaWarnings = warnings;
-
-      if (ninaLayer){
-        try { mapInstance?.removeLayer(ninaLayer); } catch {}
-      }
-
-      if (mapInstance){
-        ninaLayer = buildNinaLayer(features);
-        if (ninaLayer && document.getElementById('chkWarn')?.checked){
-          ninaLayer.addTo(mapInstance);
-        }
-      }
-
-      return warnings;
-    }catch(err){
-      console.warn('NINA warnings failed:', err);
-      return [];
+  try{
+    const res = await fetch('/warnings/nina.geojson', { cache:'no-store' });
+    if (!res.ok) throw new Error(`NINA GeoJSON ${res.status}`);
+    const data = await res.json();
+    const features = Array.isArray(data?.features) ? data.features : [];
+    ninaFeatures = features;
+    ninaLayer = buildNinaLayer(features);
+    if (dom.chkNina?.checked && ninaLayer){
+      ninaLayer.addTo(mapRef);
     }
-  })();
+    updateNinaSidebar(features);
+    refreshSidebar();
+  }catch(err){
+    console.warn('NINA warnings failed:', err);
+    renderEmpty(dom.listNina, 'Warnungen konnten nicht geladen werden.');
+  }
+}
 
-  return ninaFetchPromise.finally(() => {
-    ninaFetchPromise = null;
+function toggleDwdLayer(on){
+  if (on){
+    if (dwdLayer){
+      dwdLayer.addTo(mapRef);
+      refreshSidebar();
+    }else{
+      loadDwdWarnings();
+    }
+  }else if (dwdLayer){
+    mapRef.removeLayer(dwdLayer);
+    refreshSidebar();
+  }
+}
+
+function toggleNinaLayer(on){
+  if (on){
+    if (ninaLayer){
+      ninaLayer.addTo(mapRef);
+    }else{
+      loadNinaWarnings();
+    }
+  }else if (ninaLayer){
+    mapRef.removeLayer(ninaLayer);
+  }
+}
+
+function buildDwdLayer(features){
+  if (!leafletRef || !Array.isArray(features)) return null;
+  return leafletRef.geoJSON(features, {
+    pane:'warnPane',
+    style: feature => {
+      const sev = parseSeverity(feature?.properties);
+      const color = WARNING_LEVEL_COLORS[sev] || '#b3b3b3';
+      return { color, weight:1.2, fillOpacity:0.3, fillColor:color };
+    },
+    onEachFeature: (feature, layer)=>{
+      layer.on('click', ()=>{
+        const bounds = layer.getBounds();
+        mapRef.fitBounds(bounds, { maxZoom: mapRef.getMaxZoom() - 1 });
+      });
+      const props = feature?.properties || {};
+      const title = props.EVENT || props.HEADLINE || 'Wetterwarnung';
+      const timeframe = formatTimeRange(props.ONSET || props.onset, props.EXPIRES || props.expires);
+      const desc = props.DESCRIPTION || '';
+      layer.bindPopup(`<div class="warn-popup"><strong>${title}</strong><br>${timeframe}<br>${desc}</div>`);
+    }
   });
 }
 
 function buildNinaLayer(features){
-  if (!Array.isArray(features)) return null;
-  return L.geoJSON(features, {
+  if (!leafletRef || !Array.isArray(features)) return null;
+  return leafletRef.geoJSON(features, {
     pane:'warnPane',
-    style: (feature)=>({
-      color: '#555',
-      weight: 1,
-      fillOpacity: 0.35,
-      fillColor: WARNING_LEVEL_COLORS[Number(feature?.properties?.severity) || 0] || '#b3b3b3'
-    }),
+    style: feature => {
+      const sev = Number(feature?.properties?.severity) || 0;
+      const color = WARNING_LEVEL_COLORS[sev] || '#555';
+      return { color, weight:1, fillOpacity:0.35, fillColor:color };
+    },
     onEachFeature: (feature, layer)=>{
-      const props = feature?.properties || {};
-      const title = props.headline || props.event || 'Warnung';
-      const desc = props.description || '';
-      const time = formatTimeRange(props.onset || props.effective, props.expires);
-      const content = `<div class="warn-popup"><strong>${title}</strong><br>${props.provider || 'NINA'}${props.regionName ? ' – ' + props.regionName : ''}<br>${time || ''}<br>${(desc || '').replace(/\n/g,'<br>')}</div>`;
       layer.on('click', ()=>{
-        layer.bindPopup(content).openPopup();
+        const bounds = layer.getBounds();
+        if (bounds && bounds.isValid()){
+          mapRef.fitBounds(bounds, { maxZoom: mapRef.getMaxZoom() - 1 });
+        }
       });
+      const props = feature?.properties || {};
+      const headline = props.headline || props.event || 'Warnung';
+      const desc = (props.description || '').replace(/\n/g,'<br>');
+      const time = formatTimeRange(props.onset || props.effective, props.expires);
+      layer.bindPopup(`<div class="warn-popup"><strong>${headline}</strong><br>${props.provider || 'NINA'}<br>${time}<br>${desc}</div>`);
     }
   });
 }
 
-function featureToWarning(feature){
-  if (!feature || typeof feature !== 'object') return null;
-  const props = feature.properties || {};
-  const center = geometryCenter(feature.geometry) || props.centroid;
-  return {
-    id: props.id,
-    level: Number(props.severity) || 0,
-    severity: Number(props.severity) || 0,
-    headline: props.headline || props.event || 'Warnung',
-    description: props.description || '',
-    provider: props.provider || props.source,
-    source: props.source || 'NINA',
-    regionName: props.regionName || props.rs,
-    event: props.event,
-    category: props.category,
-    start: props.onset || props.effective,
-    end: props.expires,
-    geometry: feature.geometry,
-    lat: center?.lat ?? null,
-    lon: center?.lon ?? null
-  };
+function refreshSidebar(){
+  if (!mapRef) return;
+  const visibleWarnings = allDwdFeatures.filter(f => f?.geometry && mapRef.getBounds().intersects(leafletRef.geoJSON(f).getBounds()));
+  updateDwdSidebar(visibleWarnings);
+  const hasAny = visibleWarnings.length > 0 || (dom.chkNina?.checked && ninaFeatures.length > 0);
+  if (hasAny){
+    setSidebarVisibility(true);
+  }else{
+    setSidebarVisibility(false);
+  }
 }
 
-export function renderWarnings(warnings){
-  if (Array.isArray(warnings)){
-    cachedWarnings = warnings.filter(w => w && typeof w === 'object');
+function setSidebarVisibility(show){
+  if (!dom.listBox) return;
+  dom.listBox.style.display = show ? 'block' : 'none';
+  if (dom.chkWarnList){
+    dom.chkWarnList.checked = show;
   }
-
-  if (!mapInstance){
-    return [];
-  }
-
-  const bounds = mapInstance.getBounds();
-  const useBounds = isBoundsFilterActive();
-  filterUsesBounds = useBounds;
-
-  const source = Array.isArray(cachedWarnings) ? cachedWarnings : [];
-  const filtered = useBounds
-    ? source.filter(w => isWarningInsideBounds(w, bounds))
-    : source.slice();
-
-  filtered.sort((a, b) => Number(b?.level ?? 0) - Number(a?.level ?? 0));
-
-  updateWarningList(filtered);
-  return filtered;
 }
 
-export function createWarningCard(warning){
-  const level = Number(warning?.level ?? warning?.severity ?? 0);
-  const color = WARNING_LEVEL_COLORS[level] || '#b3b3b3';
+function updateDwdSidebar(features){
+  if (!dom.listDwd) return;
+  dom.listDwd.innerHTML = '';
+  if (!Array.isArray(features) || features.length === 0){
+    renderEmpty(dom.listDwd, 'Keine Warnungen im aktuellen Kartenausschnitt');
+    return;
+  }
+  const normalized = features.map(f => normalizeDwdFeature(f));
+  normalized.sort(sortWarnings);
+  normalized.forEach(item => dom.listDwd.appendChild(createCard(item, () => zoomToFeature(item.feature))));
+}
 
+function updateNinaSidebar(features){
+  if (!dom.listNina) return;
+  dom.listNina.innerHTML = '';
+  if (!Array.isArray(features) || features.length === 0){
+    renderEmpty(dom.listNina, 'Derzeit keine aktiven Warnungen');
+    return;
+  }
+  const normalized = features.map(f => normalizeNinaFeature(f));
+  normalized.sort(sortWarnings);
+  normalized.forEach(item => dom.listNina.appendChild(createCard(item, () => zoomToFeature(item.feature))));
+}
+
+function renderEmpty(target, text){
+  if (!target) return;
+  const empty = document.createElement('div');
+  empty.className = 'warn-empty hint';
+  empty.textContent = text;
+  target.appendChild(empty);
+}
+
+function createCard(warning, onClick){
   const card = document.createElement('div');
   card.className = 'warn-card';
-  card.dataset.level = Number.isFinite(level) && level > 0 ? String(level) : '';
-  card.style.borderLeft = `6px solid ${color}`;
-  card.style.padding = '8px 12px';
-  card.style.margin = '0 0 8px 0';
+  card.style.borderLeftColor = WARNING_LEVEL_COLORS[warning.severity] || '#b3b3b3';
+  card.onclick = onClick;
 
   const title = document.createElement('div');
   title.className = 'warn-card__headline';
-  title.textContent = warning?.headline || warning?.event || 'Wetterwarnung';
+  title.textContent = warning.title || 'Warnung';
   card.appendChild(title);
 
   const metaParts = [];
-  if (Number.isFinite(level) && level > 0){
-    metaParts.push(`Stufe ${level}`);
-  }
-  const provider = (warning?.provider || warning?.source || '').trim();
-  if (provider){
-    metaParts.push(provider);
-  }
-  const region = (warning?.regionName || warning?.area || warning?.region || '').trim();
-  if (region){
-    metaParts.push(region);
-  }
-  const timeframe = formatTimeRange(warning?.start, warning?.end);
-  if (timeframe){
-    metaParts.push(timeframe);
-  }
-
+  if (warning.severity) metaParts.push(`Stufe ${warning.severity}`);
+  if (warning.source) metaParts.push(warning.source);
+  if (warning.area) metaParts.push(warning.area);
+  if (warning.timeframe) metaParts.push(warning.timeframe);
   if (metaParts.length){
     const meta = document.createElement('div');
     meta.className = 'warn-card__meta hint';
@@ -316,197 +293,84 @@ export function createWarningCard(warning){
     card.appendChild(meta);
   }
 
-  const description = (warning?.description || warning?.text || '').trim();
-  if (description){
+  if (warning.description){
     const desc = document.createElement('div');
     desc.className = 'warn-card__description';
-    appendTextWithBreaks(desc, description);
+    desc.textContent = warning.description;
     card.appendChild(desc);
   }
 
   return card;
 }
 
-export function updateWarningList(filtered){
-  const root = document.getElementById('warnItems');
-  if (!root) return;
-
-  root.style.maxHeight = '300px';
-  root.style.overflowY = 'auto';
-  root.innerHTML = '';
-
-  if (!Array.isArray(filtered) || filtered.length === 0){
-    const empty = document.createElement('div');
-    empty.className = 'warn-empty hint';
-    empty.textContent = filterUsesBounds
-      ? 'Keine Warnungen im aktuellen Kartenausschnitt'
-      : 'Derzeit keine aktiven Warnungen';
-    root.appendChild(empty);
-    return;
-  }
-
-  root.scrollTop = 0;
-  filtered.forEach(w => {
-    root.appendChild(createWarningCard(w));
-  });
+function normalizeDwdFeature(feature){
+  const props = feature?.properties || {};
+  const severity = parseSeverity(props);
+  return {
+    feature,
+    severity,
+    title: props.EVENT || props.HEADLINE || 'Wetterwarnung',
+    source: 'DWD',
+    area: props.AREA || props.AREANAME || props.NAME || '',
+    timeframe: formatTimeRange(props.ONSET || props.onset, props.EXPIRES || props.expires),
+    description: props.DESCRIPTION || '',
+    start: props.ONSET || props.onset || '',
+    end: props.EXPIRES || props.expires || ''
+  };
 }
 
-function appendTextWithBreaks(target, text){
-  const parts = text.split(/\n+/).filter(part => part.trim().length > 0);
-  if (!parts.length){
-    target.textContent = text;
-    return;
-  }
+function normalizeNinaFeature(feature){
+  const props = feature?.properties || {};
+  return {
+    feature,
+    severity: Number(props.severity) || 0,
+    title: props.headline || props.event || 'Warnung',
+    source: props.provider || props.source || 'NINA',
+    area: props.regionName || props.rs || props.area || '',
+    timeframe: formatTimeRange(props.onset || props.effective, props.expires),
+    description: props.description || '',
+    start: props.onset || props.effective || '',
+    end: props.expires || ''
+  };
+}
 
-  parts.forEach((part, idx) => {
-    target.appendChild(document.createTextNode(part.trim()));
-    if (idx < parts.length - 1){
-      target.appendChild(document.createElement('br'));
-    }
-  });
+function parseSeverity(props){
+  const sev = Number(props?.SEVERITY ?? props?.severity ?? props?.LEVEL);
+  return Number.isFinite(sev) ? sev : 0;
+}
+
+function sortWarnings(a, b){
+  const sevDiff = Number(b?.severity || 0) - Number(a?.severity || 0);
+  if (sevDiff !== 0) return sevDiff;
+  const startA = safeTime(a?.start);
+  const startB = safeTime(b?.start);
+  return startA - startB;
+}
+
+function safeTime(value){
+  const t = new Date(value || 0).getTime();
+  return Number.isFinite(t) ? t : 0;
 }
 
 function formatTimeRange(start, end){
   const startStr = formatTimestamp(start);
   const endStr = formatTimestamp(end);
-
-  if (startStr && endStr){
-    return `${startStr} – ${endStr}`;
-  }
+  if (startStr && endStr) return `${startStr} – ${endStr}`;
   return startStr || endStr || '';
 }
 
 function formatTimestamp(value){
   if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString();
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString();
 }
 
-function isWarningInsideBounds(warning, bounds){
-  const coords = extractCoordinates(warning);
-  if (!coords) return false;
-
-  const { lat, lon } = coords;
-  const south = bounds.getSouth();
-  const north = bounds.getNorth();
-  const west = bounds.getWest();
-  const east = bounds.getEast();
-
-  if (east < west){
-    const withinLon = lon >= west || lon <= east;
-    return withinLon && lat >= south && lat <= north;
+function zoomToFeature(feature){
+  if (!leafletRef || !mapRef || !feature?.geometry) return;
+  const layer = leafletRef.geoJSON(feature);
+  const bounds = layer.getBounds();
+  if (bounds && bounds.isValid()){
+    mapRef.fitBounds(bounds, { maxZoom: mapRef.getMaxZoom() - 1 });
   }
-
-  return lat >= south && lat <= north && lon >= west && lon <= east;
-}
-
-function extractCoordinates(warning){
-  if (!warning || typeof warning !== 'object') return null;
-
-  const centroid = geometryCenter(warning.geometry || warning);
-  if (centroid) return centroid;
-
-  const lat = pickNumeric([
-    warning.lat,
-    warning.latitude,
-    warning?.latLng?.lat,
-    warning?.latlng?.lat,
-    warning?.position?.lat,
-    warning?.coordinates?.[1],
-    warning?.coord?.[1],
-    warning?.geometry?.coordinates?.[1],
-    warning?.geometry?.coordinates?.[0]?.[1],
-    Array.isArray(warning?.geometry?.coordinates?.[0]) && Array.isArray(warning?.geometry?.coordinates?.[0][0])
-      ? warning.geometry.coordinates[0][0][1]
-      : undefined,
-    Array.isArray(warning?.geometry?.geometries)
-      ? warning.geometry.geometries[0]?.coordinates?.[1]
-      : undefined
-  ]);
-
-  const lon = pickNumeric([
-    warning.lon,
-    warning.lng,
-    warning.longitude,
-    warning?.latLng?.lng,
-    warning?.latlng?.lng,
-    warning?.position?.lng,
-    warning?.position?.lon,
-    warning?.coordinates?.[0],
-    warning?.coord?.[0],
-    warning?.geometry?.coordinates?.[0],
-    warning?.geometry?.coordinates?.[0]?.[0],
-    Array.isArray(warning?.geometry?.coordinates?.[0]) && Array.isArray(warning?.geometry?.coordinates?.[0][0])
-      ? warning.geometry.coordinates[0][0][0]
-      : undefined,
-    Array.isArray(warning?.geometry?.geometries)
-      ? warning.geometry.geometries[0]?.coordinates?.[0]
-      : undefined
-  ]);
-
-  if (lat === null || lon === null) return null;
-  return { lat, lon };
-}
-
-function pickNumeric(candidates){
-  for (const value of candidates){
-    const numeric = parseCoordinate(value);
-    if (numeric !== null) return numeric;
-  }
-  return null;
-}
-
-function parseCoordinate(value){
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'string'){
-    const normalized = value.trim().replace(',', '.');
-    if (!normalized){
-      return null;
-    }
-    const num = Number(normalized);
-    return Number.isFinite(num) ? num : null;
-  }
-
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-}
-
-function geometryCenter(geometry){
-  if (!geometry || typeof geometry !== 'object') return null;
-  if (geometry.type === 'Point' && Array.isArray(geometry.coordinates)){
-    const [lon, lat] = geometry.coordinates;
-    if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
-  }
-
-  const coords = geometry.type === 'Polygon'
-    ? geometry.coordinates?.[0]
-    : geometry.type === 'MultiPolygon'
-      ? geometry.coordinates?.[0]?.[0]
-      : null;
-
-  if (Array.isArray(coords) && coords.length){
-    let sumLat = 0;
-    let sumLon = 0;
-    let count = 0;
-    coords.forEach(pair => {
-      if (Array.isArray(pair) && pair.length >= 2){
-        const [lon, lat] = pair;
-        if (Number.isFinite(lat) && Number.isFinite(lon)){
-          sumLat += lat;
-          sumLon += lon;
-          count += 1;
-        }
-      }
-    });
-    if (count){
-      return { lat: sumLat / count, lon: sumLon / count };
-    }
-  }
-  return null;
-}
-
-function isBoundsFilterActive(){
-  const chk = document.getElementById('chkWarnInView');
-  return !chk || chk.checked;
 }

@@ -73,10 +73,10 @@
       <div class="row">
         <label for="chkWarn">Wetterwarnungen (DWD)</label>
         <input type="checkbox" id="chkWarn">
+        <label for="chkNina">Warnungen (BBK/NINA)</label>
+        <input type="checkbox" id="chkNina">
         <label for="chkWarnList">Warnliste</label>
         <input type="checkbox" id="chkWarnList">
-        <label for="chkWarnInView">nur im Kartenausschnitt</label>
-        <input type="checkbox" id="chkWarnInView" checked>
       </div>
 
       <div class="row">
@@ -94,12 +94,19 @@
   </div>
 
   <div id="warnList" class="warnlist" style="display:none;">
-    <div class="title">Aktuelle Wetterwarnungen (DWD)</div>
-    <div id="warnItems"></div>
+    <div class="warnlist-tabs" role="tablist" aria-label="Warnquellen">
+      <button id="tabDwd" class="tab active" role="tab" aria-selected="true" aria-controls="panelDwd">DWD</button>
+      <button id="tabNina" class="tab" role="tab" aria-selected="false" aria-controls="panelNina">BBK / NINA</button>
+    </div>
+    <div id="panelDwd" class="warnlist-panel" role="tabpanel" aria-labelledby="tabDwd">
+      <div class="title">Aktuelle Wetterwarnungen (DWD)</div>
+      <div id="warnItemsDwd"></div>
+    </div>
+    <div id="panelNina" class="warnlist-panel" role="tabpanel" aria-labelledby="tabNina" hidden>
+      <div class="title">Warnungen (BBK / NINA)</div>
+      <div id="warnItemsNina"></div>
+    </div>
   </div>
-
-  <!-- Banner mittig oben bei „keine Warnungen“ -->
-  <div id="noWarnBanner" class="banner">✅ Aktuell keine amtlichen Wetterwarnungen</div>
 
   <footer class="footer">Radar & Sat: RainViewer • Wind: Open-Meteo • OSM © Mitwirkende</footer>
 
