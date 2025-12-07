@@ -113,8 +113,45 @@ body.dark .badge{background:rgba(33,150,243,0.35);color:#e3f2fd;}
   border-color:#1976d2;
 }
 .warnlist-panel{max-height:42vh; overflow:auto;}
-.warn-card{border-left:6px solid #ddd; padding:6px 8px; margin:6px 0; background:rgba(0,0,0,0.03); border-radius:6px}
-.warn-card:hover{background:rgba(0,0,0,0.05); cursor:pointer;}
+.warn-card{
+  border-left:8px solid #ddd;
+  padding:8px 10px;
+  margin:8px 0;
+  background:linear-gradient(135deg, rgba(0,0,0,0.04), rgba(0,0,0,0.02));
+  border-radius:10px;
+  box-shadow:0 4px 12px rgba(0,0,0,0.08);
+  transition:transform .12s ease, box-shadow .12s ease;
+}
+.warn-card:hover{
+  transform:translateY(-1px);
+  box-shadow:0 8px 18px rgba(0,0,0,0.14);
+  cursor:pointer;
+}
+.warn-card__header{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
+.warn-card__headline{font-weight:700;}
+.warn-card__severity{
+  display:inline-block;
+  padding:2px 10px;
+  border-radius:999px;
+  font-weight:800;
+  font-size:12px;
+  letter-spacing:0.01em;
+  color:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,0.18);
+}
+.warn-card__severity--1{background:linear-gradient(135deg,#ffd54f,#fbc02d);}
+.warn-card__severity--2{background:linear-gradient(135deg,#ffb74d,#ff9800);}
+.warn-card__severity--3{background:linear-gradient(135deg,#ef5350,#e53935);}
+.warn-card__severity--4{background:linear-gradient(135deg,#ab47bc,#8e24aa);}
+.warn-card--sev-1{border-left-color:#fbc02d; background:linear-gradient(135deg,#fff8e1,#ffecb3);} 
+.warn-card--sev-2{border-left-color:#ff9800; background:linear-gradient(135deg,#fff3e0,#ffe0b2);} 
+.warn-card--sev-3{border-left-color:#e53935; background:linear-gradient(135deg,#ffebee,#ffcdd2);} 
+.warn-card--sev-4{border-left-color:#8e24aa; background:linear-gradient(135deg,#f3e5f5,#e1bee7);} 
+body.dark .warn-card{background:linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03)); box-shadow:0 4px 14px rgba(0,0,0,0.4);}
+body.dark .warn-card--sev-1{background:linear-gradient(135deg, rgba(255,213,79,0.22), rgba(255,193,7,0.16));}
+body.dark .warn-card--sev-2{background:linear-gradient(135deg, rgba(255,183,77,0.22), rgba(255,152,0,0.15));}
+body.dark .warn-card--sev-3{background:linear-gradient(135deg, rgba(239,83,80,0.22), rgba(229,57,53,0.18));}
+body.dark .warn-card--sev-4{background:linear-gradient(135deg, rgba(171,71,188,0.22), rgba(142,36,170,0.18));}
 .warn-card__meta{margin:4px 0;}
 .warn-card__description{white-space:pre-line;}
 
@@ -129,32 +166,47 @@ body.dark .badge{background:rgba(33,150,243,0.35);color:#e3f2fd;}
 .rv-tiles{transition:opacity .28s linear; will-change:opacity}
 
 /* Standort-Markierung */
-.loc-icon{display:flex;align-items:center;justify-content:center;}
+.loc-icon{display:flex;align-items:flex-end;justify-content:center;width:48px;height:60px;position:relative;}
 .loc-marker{
-  width:32px; height:32px;
-  border-radius:50%;
-  border:3px solid #0d47a1;
-  background:radial-gradient(circle at 50% 50%, #fff 0%, #64b5f6 45%, #1976d2 100%);
   position:relative;
-  box-shadow:0 0 10px rgba(33,150,243,0.45);
+  width:34px;
+  height:34px;
+  background:linear-gradient(160deg,#ff6f61 0%,#e53935 55%,#b71c1c 100%);
+  border-radius:50% 50% 45% 45%;
+  transform:translateY(6px);
+  box-shadow:0 6px 14px rgba(0,0,0,0.28);
 }
 .loc-marker::after{
   content:"";
   position:absolute;
+  bottom:-14px;
+  left:50%;
+  transform:translateX(-50%);
+  width:0;
+  height:0;
+  border-left:9px solid transparent;
+  border-right:9px solid transparent;
+  border-top:16px solid #b71c1c;
+  filter:drop-shadow(0 4px 6px rgba(0,0,0,0.35));
+}
+.loc-marker__inner{
+  position:absolute;
   top:50%; left:50%; transform:translate(-50%,-50%);
-  width:10px; height:10px;
-  background:#fff; border-radius:50%;
-  box-shadow:0 0 4px rgba(0,0,0,0.2);
+  width:14px; height:14px;
+  background:#fff;
+  border-radius:50%;
+  box-shadow:0 2px 6px rgba(0,0,0,0.25);
 }
 .loc-pointer{
   position:absolute;
-  top:-12px; left:50%;
-  width:6px; height:18px;
-  background:#0d47a1;
+  top:-8px; left:50%;
+  width:10px; height:18px;
+  background:linear-gradient(180deg,#fff3e0,#ffb74d);
   border-radius:3px 3px 0 0;
   transform-origin:50% 16px;
   transform:translateX(-50%) rotate(var(--rot,0deg));
-  box-shadow:0 2px 4px rgba(0,0,0,0.2);
+  box-shadow:0 2px 6px rgba(0,0,0,0.25);
+  border:1px solid rgba(0,0,0,0.1);
 }
 
 .leaflet-tooltip.wind-tooltip{

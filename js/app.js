@@ -130,8 +130,8 @@ async function boot(){
     const pointerStyle = Number.isFinite(direction) ? `--rot:${rot}deg;` : '--rot:0deg;opacity:0;';
     const icon = L.divIcon({
       className:'loc-icon',
-      html:`<div class="loc-marker"><div class="loc-pointer" style="${pointerStyle}"></div></div>`,
-      iconSize:[36,36], iconAnchor:[18,18], tooltipAnchor:[0,-20],
+      html:`<div class="loc-marker"><div class="loc-pointer" style="${pointerStyle}"></div><div class="loc-marker__inner"></div></div>`,
+      iconSize:[48,60], iconAnchor:[24,52], tooltipAnchor:[0,-32],
     });
     if(locateMarker){
       locateMarker.setLatLng([lat, lon]);
