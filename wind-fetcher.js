@@ -33,9 +33,9 @@ if (bounds.east <= bounds.west) {
   throw new Error('WIND_LON_MAX must be larger than WIND_LON_MIN');
 }
 
-const latStep = clampNumber(process.env.WIND_LAT_STEP, 1.0) || 1.0;
-const lonStep = clampNumber(process.env.WIND_LON_STEP, 1.0) || 1.0;
-const refreshMinutes = Math.max(5, clampNumber(process.env.WIND_REFRESH_MINUTES, 30) || 30);
+const latStep = clampNumber(process.env.WIND_LAT_STEP, 2.0) || 2.0;
+const lonStep = clampNumber(process.env.WIND_LON_STEP, 2.0) || 2.0;
+const refreshMinutes = Math.max(5, clampNumber(process.env.WIND_REFRESH_MINUTES, 180) || 180);
 const requestDelayMs = Math.max(0, clampNumber(process.env.WIND_REQUEST_DELAY_MS, 150) || 0);
 
 const apiBase = process.env.WIND_API_URL ?? 'https://api.open-meteo.com/v1/gfs';
