@@ -1,22 +1,63 @@
-// Erzeugt einen Windströmungs-Layer aus /wind/current.json und bindet ihn an eine Checkbox
+// Windströmung-Layer mit auswählbaren Regionen und zoom-abhängigem Downsampling
+const REGION_SOURCES = {
+  germany: { label: 'Germany', path: '/data/wind-germany.json' },
+  europe: { label: 'Europe', path: '/data/wind-europe.json' },
+  world: { label: 'World', path: '/data/wind-global.json' }
+};
+
+// Anteil der Punkte je Zoomstufe (über Modulo stabil und deterministisch)
+const ZOOM_SAMPLING = [
+  { maxZoom: 4, step: 4 }, // 25 %
+  { maxZoom: 6, step: 2 }, // 50 %
+  { maxZoom: Infinity, step: 1 } // 100 %
+];
+
+// Optionen der Velocity-Layer für ein ruhiges Partikelfeld
+const VELOCITY_OPTIONS = {
+  maxVelocity: 25,
+  velocityScale: 0.008,
+  particleAge: 60,
+  particleMultiplier: 0.012,
+  frameRate: 20,
+  lineWidth: 1.2,
+  velocityType: '10m Wind',
+  speedUnit: 'm/s'
+};
+
 export function bindWindFlow(L, map, ui) {
   const checkbox = ui?.chkWindFlow || document.querySelector('#chkWindFlow');
+  const regionSelect = ui?.selWindRegion || document.querySelector('#selWindRegion');
+  const infoLabel = ui?.lblWindFlowInfo || document.querySelector('#lblWindFlowInfo');
+
   if (!checkbox) {
     console.error('Wind-Checkbox (#chkWindFlow) nicht gefunden.');
     return;
   }
 
   let velocityLayer = null;
-  let windPayload = null;
-  let loadPromise = null;
+  let rafId = null;
+  let currentRegion = regionSelect?.value || 'germany';
+  const payloadCache = new Map();
+  const loadPromises = new Map();
 
-  // Windströmung ist initial deaktiviert
   checkbox.checked = false;
+  updateInfoLabel('Wind flow: Germany');
+
   checkbox.addEventListener('change', () => {
-    if (checkbox.checked) {
-      enableLayer();
-    } else {
-      disableLayer();
+    if (checkbox.checked) enableLayer();
+    else disableLayer();
+  });
+
+  regionSelect?.addEventListener('change', () => {
+    currentRegion = regionSelect.value || 'germany';
+    updateInfoLabel(`Wind flow: ${REGION_SOURCES[currentRegion]?.label ?? 'Region'}`);
+    if (checkbox.checked) enableLayer(true);
+  });
+
+  map.on('zoomend', () => {
+    if (checkbox.checked && payloadCache.has(currentRegion)) {
+      const payload = payloadCache.get(currentRegion);
+      scheduleUpdate(payload, currentRegion);
     }
   });
 
@@ -26,146 +67,192 @@ export function bindWindFlow(L, map, ui) {
     }
   }
 
-  async function enableLayer() {
-    // Daten wurden bereits geladen und Layer existiert -> nur wieder einblenden
-    if (velocityLayer) {
-      map.addLayer(velocityLayer);
+  async function enableLayer(forceReload = false) {
+    updateInfoLabel(`Wind flow: ${REGION_SOURCES[currentRegion]?.label ?? 'Region'} (lädt…)`);
+
+    const data = await getWindData(currentRegion, forceReload);
+    if (!data) {
+      checkbox.checked = false;
+      updateInfoLabel(`Wind flow: ${REGION_SOURCES[currentRegion]?.label ?? 'Region'} (nicht verfügbar)`);
       return;
     }
 
-    try {
-      const data = await getWindData();
-      if (!data) {
-        checkbox.checked = false;
-        return;
-      }
-
-      velocityLayer = L.velocityLayer({
-        data,
-        maxVelocity: 25,
-        velocityScale: 0.008,
-        particleAge: 60,
-        particleMultiplier: 0.012,
-        frameRate: 20,
-        lineWidth: 1.2,
-        velocityType: '10m Wind',
-        speedUnit: 'm/s'
-      });
-
+    scheduleUpdate(data, currentRegion);
+    if (velocityLayer && !map.hasLayer(velocityLayer)) {
       map.addLayer(velocityLayer);
-    } catch (err) {
-      console.error('Windströmung konnte nicht aktiviert werden:', err);
-      checkbox.checked = false;
     }
   }
 
-  function getWindData() {
-    if (windPayload) return Promise.resolve(windPayload);
-    if (loadPromise) return loadPromise;
+  function updateInfoLabel(text) {
+    if (!infoLabel) return;
+    infoLabel.textContent = text;
+  }
 
-    loadPromise = fetch('/wind/current.json', { cache: 'no-store' })
+  function scheduleUpdate(payload, regionKey) {
+    if (!payload) return;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      applyWindData(payload, regionKey);
+    });
+  }
+
+  function applyWindData(payload, regionKey) {
+    const sampledPoints = samplePointsForZoom(payload.points, map.getZoom());
+    const velocityData = buildVelocityData(sampledPoints, payload.generated);
+
+    if (!velocityData) {
+      updateInfoLabel(`Wind flow: ${REGION_SOURCES[regionKey]?.label ?? 'Region'} (Daten fehlerhaft)`);
+      return;
+    }
+
+    const layerOptions = { ...VELOCITY_OPTIONS, data: velocityData };
+
+    if (velocityLayer && typeof velocityLayer.setData === 'function') {
+      velocityLayer.setData(velocityData);
+    } else {
+      if (velocityLayer && map.hasLayer(velocityLayer)) {
+        map.removeLayer(velocityLayer);
+      }
+      velocityLayer = L.velocityLayer(layerOptions);
+      map.addLayer(velocityLayer);
+    }
+
+    const timeText = formatTimeUtc(payload.generated);
+    updateInfoLabel(`Wind flow: ${REGION_SOURCES[regionKey]?.label ?? 'Region'}${timeText ? ` (updated ${timeText} UTC)` : ''}`);
+  }
+
+  function getWindData(regionKey, forceReload = false) {
+    if (!forceReload && payloadCache.has(regionKey)) {
+      return Promise.resolve(payloadCache.get(regionKey));
+    }
+    if (!forceReload && loadPromises.has(regionKey)) {
+      return loadPromises.get(regionKey);
+    }
+
+    const source = REGION_SOURCES[regionKey];
+    if (!source?.path) {
+      return Promise.resolve(null);
+    }
+
+    const promise = fetch(source.path, { cache: 'force-cache' })
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json();
       })
-      .then((raw) => {
-        const formatted = formatWindData(raw);
-        if (!formatted) return null;
-        windPayload = formatted; // Cache, damit nicht erneut geladen wird
-        return formatted;
+      .then((json) => {
+        if (!json || !Array.isArray(json.points)) return null;
+        const payload = { generated: json.generated || null, points: json.points };
+        payloadCache.set(regionKey, payload);
+        return payload;
       })
       .catch((err) => {
         console.error('Winddaten konnten nicht geladen werden:', err);
-        checkbox.checked = false;
         return null;
       })
       .finally(() => {
-        loadPromise = null;
+        loadPromises.delete(regionKey);
       });
 
-    return loadPromise;
-  }
-
-  function formatWindData(raw) {
-    const bounds = raw?.meta?.bounds;
-    const grid = raw?.meta?.grid;
-    const refTime = raw?.meta?.datasetTime;
-
-    const fromUvArrays = Array.isArray(raw?.u) && Array.isArray(raw?.v);
-    const fromDataArray = Array.isArray(raw?.data) && raw.data.length >= 2;
-
-    let u = null;
-    let v = null;
-    let headerOverride = null;
-
-    if (fromUvArrays) {
-      u = raw.u;
-      v = raw.v;
-    } else if (fromDataArray) {
-      const [uLayer, vLayer] = raw.data;
-      u = Array.isArray(uLayer?.data) ? uLayer.data : null;
-      v = Array.isArray(vLayer?.data) ? vLayer.data : null;
-      const uHeader = uLayer?.header;
-      const vHeader = vLayer?.header;
-      if (uHeader && vHeader) {
-        headerOverride = {
-          lo1: Number(uHeader.lo1),
-          lo2: Number(uHeader.lo2),
-          la1: Number(uHeader.la1),
-          la2: Number(uHeader.la2),
-          nx: Number(uHeader.nx),
-          ny: Number(uHeader.ny),
-          dx: Number(uHeader.dx),
-          dy: Number(uHeader.dy),
-          refTime: refTime || uHeader.refTime || vHeader.refTime
-        };
-      }
-    }
-
-    if (!bounds || !grid || !u || !v) {
-      console.error('Winddaten unvollständig oder fehlerhaft.');
-      return null;
-    }
-
-    const west = Number(headerOverride?.lo1 ?? bounds.west);
-    const east = Number(headerOverride?.lo2 ?? bounds.east);
-    const north = Number(headerOverride?.la1 ?? bounds.north);
-    const south = Number(headerOverride?.la2 ?? bounds.south);
-    const dx = Number(headerOverride?.dx ?? grid.longitudeStep);
-    const dy = Number(headerOverride?.dy ?? grid.latitudeStep);
-    const ref = headerOverride?.refTime || refTime;
-
-    if (![west, east, north, south, dx, dy].every(Number.isFinite) || dx === 0 || dy === 0) {
-      console.error('Ungültige Bounds/Grid in den Winddaten.');
-      return null;
-    }
-
-    // Erwartete Rastergröße aus Bounds ableiten (inklusive Start/Ende)
-    const nx = Math.round((east - west) / dx) + 1;
-    const ny = Math.round((north - south) / dy) + 1;
-
-    if (nx <= 1 || ny <= 1 || u.length !== nx * ny || v.length !== nx * ny) {
-      console.error('Winddaten haben nicht die erwartete Länge.');
-      return null;
-    }
-
-    const baseHeader = {
-      parameterCategory: 2,
-      nx,
-      ny,
-      lo1: west,
-      la1: north,
-      lo2: east,
-      la2: south,
-      dx,
-      dy,
-      refTime: ref || new Date().toISOString()
-    };
-
-    // leaflet-velocity erwartet ein Array aus U- und V-Komponente
-    return [
-      { header: { ...baseHeader, parameterNumber: 2 }, data: u },
-      { header: { ...baseHeader, parameterNumber: 3 }, data: v }
-    ];
+    loadPromises.set(regionKey, promise);
+    return promise;
   }
 }
+
+function samplePointsForZoom(points = [], zoom = 0) {
+  const step = getSampleStep(zoom);
+  if (step <= 1) return points;
+  return points.filter((_, idx) => idx % step === 0);
+}
+
+function getSampleStep(zoom) {
+  for (const rule of ZOOM_SAMPLING) {
+    if (zoom <= rule.maxZoom) return Math.max(1, rule.step);
+  }
+  return 1;
+}
+
+function buildVelocityData(points, generated) {
+  if (!points?.length) return null;
+
+  // Grid aus vorhandenen Punkten ableiten; sortiert sorgt für deterministisches Mapping
+  const lats = Array.from(new Set(points.map((p) => Number(p.lat)))).sort((a, b) => b - a); // Nord -> Süd
+  const lons = Array.from(new Set(points.map((p) => Number(p.lon)))).sort((a, b) => a - b); // West -> Ost
+
+  const latStep = lats.length > 1 ? Math.min(...diffs(lats.slice().reverse())) : 1;
+  const lonStep = lons.length > 1 ? Math.min(...diffs(lons)) : 1;
+
+  const nx = lons.length;
+  const ny = lats.length;
+  if (nx === 0 || ny === 0) return null;
+
+  const u = new Array(nx * ny).fill(0);
+  const v = new Array(nx * ny).fill(0);
+
+  // Map für schnellen Zugriff
+  const pointLookup = new Map();
+  for (const p of points) {
+    const key = `${p.lat}:${p.lon}`;
+    pointLookup.set(key, p);
+  }
+
+  for (let y = 0; y < ny; y++) {
+    for (let x = 0; x < nx; x++) {
+      const lat = lats[y];
+      const lon = lons[x];
+      const idx = y * nx + x;
+      const point = pointLookup.get(`${lat}:${lon}`);
+      if (!point) continue;
+
+      // Windrichtung in U/V (Richtung in Grad, meteorologisch, deshalb 180° versetzen)
+      const speed = Number(point.speed) || 0;
+      const dirRad = ((Number(point.dir) || 0) + 180) * (Math.PI / 180);
+      const uVal = speed * Math.cos(dirRad);
+      const vVal = speed * Math.sin(dirRad);
+      u[idx] = uVal;
+      v[idx] = vVal;
+    }
+  }
+
+  const baseHeader = {
+    parameterCategory: 2,
+    nx,
+    ny,
+    lo1: lons[0],
+    lo2: lons[nx - 1],
+    la1: lats[0],
+    la2: lats[ny - 1],
+    dx: lonStep,
+    dy: latStep,
+    refTime: generated || new Date().toISOString()
+  };
+
+  return [
+    { header: { ...baseHeader, parameterNumber: 2 }, data: u },
+    { header: { ...baseHeader, parameterNumber: 3 }, data: v }
+  ];
+}
+
+function formatTimeUtc(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '';
+  const hh = String(date.getUTCHours()).padStart(2, '0');
+  const mm = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function diffs(values) {
+  const arr = [];
+  for (let i = 1; i < values.length; i++) {
+    const diff = Math.abs(values[i] - values[i - 1]);
+    if (Number.isFinite(diff) && diff > 0) arr.push(diff);
+  }
+  return arr.length ? arr : [1];
+}
+
+// Export interne Helfer gebündelt für Tests (kein Public-API-Breaking)
+export const __test = {
+  samplePointsForZoom,
+  getSampleStep
+};
