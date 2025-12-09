@@ -68,7 +68,13 @@
       <div class="row">
         <label for="chkWindFlow">Windströmung</label>
         <input type="checkbox" id="chkWindFlow">
-        <span class="hint">animiertes Feld (experimentell)</span>
+        <label for="selWindRegion">Region</label>
+        <select id="selWindRegion">
+          <option value="germany" selected>Deutschland</option>
+          <option value="europe">Europa</option>
+          <option value="world">Welt</option>
+        </select>
+        <span id="lblWindFlowInfo" class="hint">animiertes Feld (experimentell)</span>
       </div>
       <div class="row">
         <label for="chkWarn">Wetterwarnungen (DWD)</label>
