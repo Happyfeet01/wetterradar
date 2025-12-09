@@ -131,14 +131,14 @@ const reuseLocalCache = (center, map) => {
     Math.abs(center.lat - lastLocalResult.lat) > LOCAL_MOVE_THRESHOLD ||
     Math.abs(center.lng - lastLocalResult.lon) > LOCAL_MOVE_THRESHOLD;
   if (age > LOCAL_CACHE_MS || movedFar) return false;
-  showLocalTemperature(map, lastLocalResult.temp, center, lastLocalResult.stationName);
+  showLocalTemperature(map, lastLocalResult.temp, center, lastLocalResult.sourceLabel);
   return true;
 };
 
-const showLocalTemperature = (map, temp, center, stationName = null) => {
+const showLocalTemperature = (map, temp, center, sourceLabel = null) => {
   const rounded = temp == null ? null : Number(temp).toFixed(1);
   const tempText = rounded == null || Number.isNaN(Number(rounded)) ? '–' : `${rounded} °C`;
-  const stationText = stationName ? ` (DWD, Station ${stationName})` : ' (DWD)';
+  const stationText = sourceLabel ? ` (${sourceLabel})` : '';
   const text = `Aktuell: ${tempText}${stationText}`;
   const icon = createTempIcon(L, text, 'local');
   if (localMarker) {
@@ -149,22 +149,50 @@ const showLocalTemperature = (map, temp, center, stationName = null) => {
   }
 };
 
+const fetchLocalTemperatureFromOpenMeteo = async center => {
+  const params = new URLSearchParams({
+    latitude: center.lat.toFixed(3),
+    longitude: center.lng.toFixed(3),
+    current: 'temperature_2m',
+    timezone: 'UTC',
+  });
+  const resp = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`, { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  const temp = data?.current?.temperature_2m;
+  if (!Number.isFinite(Number(temp))) throw new Error('Open-Meteo ohne Temperatur');
+  return { temp: Number(temp), sourceLabel: 'Open-Meteo' };
+};
+
 const fetchLocalTemperature = async (map, center) => {
-  const gridData = await ensureGridData();
-  const gridPoints = gridData?.points;
-  if (!Array.isArray(gridPoints) || !gridPoints.length) {
-    throw new Error('Kein DWD-Grid geladen');
+  let result = null;
+  try {
+    const gridData = await ensureGridData();
+    const gridPoints = gridData?.points;
+    if (Array.isArray(gridPoints) && gridPoints.length) {
+      const nearest = getLocalTemperatureFromDwdGrid(center.lat, center.lng, gridPoints);
+      if (nearest) {
+        const sourceLabel = nearest.station_name ? `DWD, Station ${nearest.station_name}` : 'DWD';
+        result = { temp: nearest.temp, sourceLabel };
+      }
+    }
+  } catch (err) {
+    console.warn('DWD-Temperatur-Grid fehlgeschlagen, fallback Open-Meteo:', err);
   }
-  const nearest = getLocalTemperatureFromDwdGrid(center.lat, center.lng, gridPoints);
-  if (!nearest) throw new Error('Keine Station im Grid gefunden');
+
+  if (!result) {
+    console.warn('Keine DWD-Temperaturdaten gefunden, nutze Open-Meteo.');
+    result = await fetchLocalTemperatureFromOpenMeteo(center);
+  }
+
   lastLocalResult = {
     lat: center.lat,
     lon: center.lng,
-    temp: nearest.temp,
-    stationName: nearest.station_name,
+    temp: result.temp,
+    sourceLabel: result.sourceLabel,
     fetchedAt: Date.now(),
   };
-  showLocalTemperature(map, nearest.temp, center, nearest.station_name);
+  showLocalTemperature(map, result.temp, center, result.sourceLabel);
 };
 
 const updateLocal = map => {
@@ -172,7 +200,7 @@ const updateLocal = map => {
   if (reuseLocalCache(center, map)) return;
   showLocalTemperature(map, '…', center, null);
   fetchLocalTemperature(map, center).catch(err => {
-    console.warn('Lokale Temperatur (DWD) fehlgeschlagen:', err);
+    console.warn('Lokale Temperatur fehlgeschlagen:', err);
     showLocalTemperature(map, null, center, null);
   });
 };
