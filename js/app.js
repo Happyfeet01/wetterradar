@@ -3,6 +3,7 @@ import * as Radar from './radar.js';
 import * as Sat from './satellite.js';
 import { bind as bindWarnings } from './warnings.js';
 import { bindWindFlow } from './windflow.js';
+import { bindTemperature } from './temperature.js';
 
 const map = L.map('map', { zoomSnap:0.5, worldCopyJump:true, maxZoom:10 }).setView([51.2,10.5], 6);
 const baseTiles = {
@@ -44,6 +45,7 @@ const ui = {
 // Modules
 bindWarnings(L, map, ui);
 bindWindFlow(L, map, ui);
+bindTemperature(L, map);
 
 if(ui.btnPanelToggle && ui.controlPanel){
   ui.btnPanelToggle.onclick = ()=>{
