@@ -250,3 +250,9 @@ function diffs(values) {
   }
   return arr.length ? arr : [1];
 }
+
+// Export interne Helfer gebündelt für Tests (kein Public-API-Breaking)
+export const __test = {
+  samplePointsForZoom,
+  getSampleStep
+};
