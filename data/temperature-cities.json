@@ -1,0 +1,12 @@
+{
+  "generated": "2024-05-13T12:00:00Z",
+  "cities": [
+    {"name": "Berlin", "lat": 52.52, "lon": 13.41, "temp": 18.4},
+    {"name": "Hamburg", "lat": 53.55, "lon": 9.99, "temp": 17.2},
+    {"name": "München", "lat": 48.14, "lon": 11.58, "temp": 16.8},
+    {"name": "Köln", "lat": 50.94, "lon": 6.96, "temp": 18.1},
+    {"name": "Frankfurt", "lat": 50.12, "lon": 8.68, "temp": 18.0},
+    {"name": "Stuttgart", "lat": 48.78, "lon": 9.18, "temp": 17.5},
+    {"name": "Leipzig", "lat": 51.34, "lon": 12.37, "temp": 17.9}
+  ]
+}
