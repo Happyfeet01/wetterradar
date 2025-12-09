@@ -36,7 +36,7 @@ const ui = {
   chkClouds:$('chkClouds'), rngClouds:$('rngClouds'), lblClouds:$('lblClouds'),
   chkWarn:$('chkWarn'), chkWarnList:$('chkWarnList'),
   chkDark:$('chkDark'),
-  chkWindFlow:$('chkWindFlow'),
+  chkWindFlow:$('chkWindFlow'), selWindRegion:$('selWindRegion'), lblWindFlowInfo:$('lblWindFlowInfo'),
   controlPanel:$('controlPanel'),
   btnPanelToggle:$('btnPanelToggle'),
 };
