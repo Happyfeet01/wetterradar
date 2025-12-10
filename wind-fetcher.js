@@ -11,8 +11,14 @@ const fetchFn = globalThis.fetch
     };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OUTPUT_DIR = path.resolve(__dirname, 'wind');
-const OUTPUT_FILE = path.join(OUTPUT_DIR, 'current.json');
+const OUTPUT_DIR = process.env.WIND_OUTPUT_DIR ?? '/var/www/wetterradar/wind';
+const CURRENT_FILE = path.join(OUTPUT_DIR, 'current.json');
+const LAST_SUCCESS_FILE = path.join(OUTPUT_DIR, 'last-success.json');
+const TEMP_FILE = path.join(OUTPUT_DIR, 'current.tmp.json');
+const LOCK_FILE = path.join(OUTPUT_DIR, 'wind.lock');
+
+const CACHE_INTERVAL_HOURS = 12;
+const CACHE_INTERVAL_MS = CACHE_INTERVAL_HOURS * 60 * 60 * 1000;
 
 const clampNumber = (value, fallback) => {
   const num = Number(value);
@@ -20,7 +26,6 @@ const clampNumber = (value, fallback) => {
 };
 
 const bounds = {
-  // Standardmäßig ganz Europa inkl. Skandinavien abdecken
   north: clampNumber(process.env.WIND_LAT_MAX, 72.0),
   south: clampNumber(process.env.WIND_LAT_MIN, 33.0),
   west: clampNumber(process.env.WIND_LON_MIN, -12.0),
@@ -36,7 +41,6 @@ if (bounds.east <= bounds.west) {
 
 const latStep = clampNumber(process.env.WIND_LAT_STEP, 2.0) || 2.0;
 const lonStep = clampNumber(process.env.WIND_LON_STEP, 2.0) || 2.0;
-const refreshMinutes = Math.max(5, clampNumber(process.env.WIND_REFRESH_MINUTES, 180) || 180);
 const requestDelayMs = Math.max(0, clampNumber(process.env.WIND_REQUEST_DELAY_MS, 150) || 0);
 
 const apiBase = process.env.WIND_API_URL ?? 'https://api.open-meteo.com/v1/gfs';
@@ -98,6 +102,72 @@ function toVector(speed, directionDeg) {
   };
 }
 
+async function ensureOutputDir() {
+  await fs.mkdir(OUTPUT_DIR, { recursive: true });
+}
+
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function log(msg) {
+  console.log(`[wind] ${msg}`);
+}
+
+function warn(msg) {
+  console.warn(`[wind] ${msg}`);
+}
+
+async function acquireLock() {
+  try {
+    const handle = await fs.open(LOCK_FILE, 'wx');
+    await handle.writeFile(`${process.pid}\n`);
+    return async () => {
+      await handle.close();
+      await fs.unlink(LOCK_FILE).catch(() => {});
+    };
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      throw new Error('Lockfile exists – another instance is running');
+    }
+    throw err;
+  }
+}
+
+async function readJson(filePath) {
+  const raw = await fs.readFile(filePath, 'utf8');
+  return JSON.parse(raw);
+}
+
+async function restoreFallbackIfNeeded() {
+  const hasCurrent = await fileExists(CURRENT_FILE);
+  const hasLastSuccess = await fileExists(LAST_SUCCESS_FILE);
+
+  if (!hasCurrent && hasLastSuccess) {
+    try {
+      const json = await readJson(LAST_SUCCESS_FILE);
+      const restored = {
+        ...json,
+        generated: json.generated ?? json?.meta?.generated ?? new Date().toISOString(),
+        interval_hours: CACHE_INTERVAL_HOURS,
+        source: 'Open-Meteo (cached, fallback-enabled)',
+        status: 'fallback'
+      };
+      await fs.writeFile(TEMP_FILE, JSON.stringify(restored, null, 2));
+      await fs.rename(TEMP_FILE, CURRENT_FILE);
+      log('Restored current cache from last successful run');
+      log('Fallback restored');
+    } catch (err) {
+      warn(`Failed to restore fallback: ${err.message}`);
+    }
+  }
+}
+
 async function fetchPoint(lat, lon, targetTime) {
   const url = new URL(apiBase);
   url.searchParams.set('latitude', lat.toFixed(3));
@@ -109,6 +179,11 @@ async function fetchPoint(lat, lon, targetTime) {
   url.searchParams.set('past_days', '0');
 
   const res = await fetchFn(url, { cache: 'no-store' });
+  if (res.status === 429) {
+    const error = new Error('Open-Meteo HTTP 429');
+    error.http429 = true;
+    throw error;
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Open-Meteo ${res.status} ${res.statusText}: ${text.slice(0, 160)}`);
@@ -161,30 +236,52 @@ function buildHeaders(datasetTimeIso) {
   ];
 }
 
-async function ensureOutputDir() {
-  await fs.mkdir(OUTPUT_DIR, { recursive: true });
-}
-
-async function writeJson(filePath, payload) {
-  const tmpPath = `${filePath}.tmp`;
-  await fs.writeFile(tmpPath, JSON.stringify(payload, null, 2));
-  await fs.rename(tmpPath, filePath);
+function collectStats(uData, vData) {
+  const magnitudes = [];
+  for (let i = 0; i < uData.length; i += 1) {
+    const u = uData[i];
+    const v = vData[i];
+    if (typeof u === 'number' && typeof v === 'number') {
+      magnitudes.push(Math.hypot(u, v));
+    }
+  }
+  const maxVelocity = magnitudes.reduce((acc, value) => (value > acc ? value : acc), 0);
+  const avgVelocity = magnitudes.length
+    ? magnitudes.reduce((acc, value) => acc + value, 0) / magnitudes.length
+    : 0;
+  return {
+    maxVelocity: Math.round(maxVelocity * 1000) / 1000,
+    avgVelocity: Math.round(avgVelocity * 1000) / 1000
+  };
 }
 
 async function buildField() {
   const uData = [];
   const vData = [];
   let datasetTime = null;
-
   let idx = 0;
+  let successCount = 0;
+  let failureCount = 0;
+
   for (const lat of latitudes) {
     for (const lon of longitudes) {
-      const point = await fetchPoint(lat, lon, datasetTime);
-      if (!datasetTime) {
-        datasetTime = point.datasetTime;
+      try {
+        const point = await fetchPoint(lat, lon, datasetTime);
+        if (!datasetTime) {
+          datasetTime = point.datasetTime;
+        }
+        uData[idx] = point.u;
+        vData[idx] = point.v;
+        successCount += 1;
+      } catch (err) {
+        if (err?.http429) {
+          err.global429 = true;
+          throw err;
+        }
+        uData[idx] = null;
+        vData[idx] = null;
+        failureCount += 1;
       }
-      uData[idx] = point.u;
-      vData[idx] = point.v;
       idx += 1;
       if (requestDelayMs) {
         await sleep(requestDelayMs);
@@ -194,16 +291,20 @@ async function buildField() {
 
   const datasetTimeIso = toIso(datasetTime) ?? new Date().toISOString();
   const headers = buildHeaders(datasetTimeIso);
-  const magnitude = uData.map((u, i) => Math.hypot(u, vData[i]));
-  const maxVelocity = magnitude.reduce((acc, value) => (value > acc ? value : acc), 0);
-  const avgVelocity = magnitude.reduce((acc, value) => acc + value, 0) / magnitude.length;
+  const stats = collectStats(uData, vData);
+
+  const generatedNow = new Date().toISOString();
 
   const payload = {
+    generated: generatedNow,
+    interval_hours: CACHE_INTERVAL_HOURS,
+    source: 'Open-Meteo (cached, fallback-enabled)',
+    status: 'ok',
     meta: {
-      generated: new Date().toISOString(),
+      generated: generatedNow,
       datasetTime: datasetTimeIso,
-      refreshMinutes,
-      source: 'Open-Meteo GFS (10 m Wind)',
+      refreshMinutes: CACHE_INTERVAL_HOURS * 60,
+      source: 'Open-Meteo (cached, fallback-enabled)',
       api: apiBase,
       bounds,
       grid: {
@@ -213,51 +314,90 @@ async function buildField() {
         ny: latitudes.length,
         points: totalPoints
       },
-      stats: {
-        maxVelocity: Math.round(maxVelocity * 1000) / 1000,
-        avgVelocity: Math.round(avgVelocity * 1000) / 1000
-      }
+      stats
     },
     data: [
+      { header: headers[0], data: uData },
+      { header: headers[1], data: vData }
+    ],
+    points: [
       { header: headers[0], data: uData },
       { header: headers[1], data: vData }
     ]
   };
 
-  return payload;
+  return { payload, successCount, failureCount };
 }
 
-async function updateOnce() {
-  console.log(
-    `[wind] Aktualisiere Feld (${latitudes.length}×${longitudes.length} Raster, ${totalPoints} Punkte)...`
-  );
-  const payload = await buildField();
-  await ensureOutputDir();
-  await writeJson(OUTPUT_FILE, payload);
-  console.log(
-    `[wind] ${OUTPUT_FILE} aktualisiert – Zeitstempel ${payload.meta.datasetTime}, max ${payload.meta.stats.maxVelocity} m/s`
-  );
+async function cacheAgeMs() {
+  if (!(await fileExists(CURRENT_FILE))) return null;
+  try {
+    const json = await readJson(CURRENT_FILE);
+    const generated = json?.generated ?? json?.meta?.generated;
+    const parsed = generated ? Date.parse(generated) : NaN;
+    if (Number.isFinite(parsed)) {
+      return Date.now() - parsed;
+    }
+  } catch {
+    // ignore JSON errors and fall back to file stats
+  }
+  try {
+    const stat = await fs.stat(CURRENT_FILE);
+    return Date.now() - stat.mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCurrentAndFallback(payload) {
+  await fs.writeFile(TEMP_FILE, JSON.stringify(payload, null, 2));
+  await fs.rename(TEMP_FILE, CURRENT_FILE);
+  await fs.copyFile(CURRENT_FILE, LAST_SUCCESS_FILE);
 }
 
 async function main() {
-  const runOnce = process.argv.includes('--once');
+  await ensureOutputDir();
+  let releaseLock;
   try {
-    await updateOnce();
+    releaseLock = await acquireLock();
   } catch (err) {
-    console.error('[wind] Aktualisierung fehlgeschlagen:', err);
-  }
-  if (runOnce) {
+    warn(err.message);
     return;
   }
-  const intervalMs = refreshMinutes * 60 * 1000;
-  console.log(`[wind] Warte ${refreshMinutes} Minuten bis zur nächsten Aktualisierung...`);
-  setInterval(async () => {
-    try {
-      await updateOnce();
-    } catch (err) {
-      console.error('[wind] Aktualisierung fehlgeschlagen:', err);
+
+  try {
+    await restoreFallbackIfNeeded();
+
+    const age = await cacheAgeMs();
+    if (age !== null && age < CACHE_INTERVAL_MS) {
+      log('Cache valid – skipping update');
+      return;
     }
-  }, intervalMs);
+
+    log('Cache expired – start fetch');
+    const { payload, successCount, failureCount } = await buildField();
+    const successRatio = successCount / totalPoints;
+
+    if (successRatio < 0.8) {
+      warn('Partial data – fallback not updated');
+      return;
+    }
+
+    await writeCurrentAndFallback(payload);
+    log('Update successful – fallback refreshed');
+    log('Update complete');
+  } catch (err) {
+    if (err?.global429 || err?.http429) {
+      warn('HTTP 429 – keeping last data');
+      warn('Update failed – using last successful data');
+      return;
+    }
+    warn(`Update failed – using last successful data (${err.message})`);
+  } finally {
+    if (releaseLock) {
+      await releaseLock();
+    }
+  }
 }
 
 main().catch((err) => {
