@@ -1,4 +1,4 @@
-import { RV_API, RV_HOST_FALLBACK, RADAR_SIZE } from './config.js';
+import { RV_API, RV_HOST_FALLBACK, RADAR_SIZE, RADAR_ZOOM_OFFSET } from './config.js';
 
 let RV_HOST = RV_HOST_FALLBACK;
 let satFrames = [];
@@ -23,7 +23,9 @@ export function toggle(L, map, on, opacity=0.7){
     const f = satFrames[satFrames.length-1];
     if(!f){ alert('Noch keine Satellitenframes.'); return; }
     if(layer) map.removeLayer(layer);
-    layer = L.tileLayer(satUrl(f), { pane:'cloudPane', tileSize:RADAR_SIZE, opacity }).addTo(map);
+    layer = L.tileLayer(satUrl(f), {
+      pane:'cloudPane', tileSize:RADAR_SIZE, zoomOffset:RADAR_ZOOM_OFFSET, opacity
+    }).addTo(map);
   }else if(layer){
     map.removeLayer(layer); layer=null;
   }
