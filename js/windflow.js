@@ -1,8 +1,30 @@
 // Windströmung-Layer mit auswählbaren Regionen und zoom-abhängigem Downsampling
 const REGION_SOURCES = {
-  germany: { label: 'Germany', path: '/wind/current.json' },
-  europe: { label: 'Europe', path: '/wind/current.json' },
-  world: { label: 'World', path: '/wind/current.json' }
+  germany: {
+    label: 'Germany',
+    path: '/wind/current.json',
+    // grobe Bounds für Deutschland
+    bounds: [
+      [47.0, 5.0], // Südwest (lat, lon)
+      [55.5, 15.5] // Nordost
+    ]
+  },
+  europe: {
+    label: 'Europe',
+    path: '/wind/current.json',
+    bounds: [
+      [33.0, -12.0], // Südwest, passend zu meta.bounds
+      [72.0, 33.0] // Nordost
+    ]
+  },
+  world: {
+    label: 'World',
+    path: '/wind/current.json',
+    bounds: [
+      [-60.0, -180.0],
+      [85.0, 180.0]
+    ]
+  }
 };
 
 // Anteil der Punkte je Zoomstufe (über Modulo stabil und deterministisch)
@@ -14,17 +36,34 @@ const ZOOM_SAMPLING = [
 
 // Optionen der Velocity-Layer für ein ruhigeres Partikelfeld
 const VELOCITY_OPTIONS = {
-  maxVelocity: 25, // wird später dynamisch über meta.stats.maxVelocity überschrieben
-  velocityScale: 0.002, // kleiner = langsamere Partikel
-  particleAge: 60, // etwas kürzer
-  lineWidth: 1, // dünner
-  particleMultiplier: 1 / 400, // weniger Partikel
+  maxVelocity: 25, // wird später dynamisch mit meta.stats.maxVelocity überschrieben
+  velocityScale: 0.0025, // ruhiger als ganz früher, aber nicht zu langsam
+  particleAge: 70,
+  lineWidth: 2, // etwas dicker -> besser sichtbar
+  particleMultiplier: 1 / 300,
+  opacity: 0.9, // fast volle Deckkraft
+  // Farbskala mit hoher Sichtbarkeit auf hellen UND dunklen Karten
+  colorScale: ['#00ffff', '#00ff00', '#ffff00', '#ff8000', '#ff0000'],
   displayValues: false,
   displayOptions: {
     velocityType: 'Wind',
     position: 'bottomleft'
   }
 };
+
+const windflowLog = [];
+function logWind(...args) {
+  const timestamp = new Date().toISOString();
+  const entry = [timestamp, ...args];
+  windflowLog.push(entry);
+  try {
+    const trimmed = windflowLog.slice(-200);
+    localStorage.setItem('windflow-log', JSON.stringify(trimmed));
+  } catch (e) {
+    // Ignorieren, wenn localStorage nicht verfügbar ist
+  }
+  console.log('[windflow]', ...entry);
+}
 
 export function bindWindFlow(L, map, ui) {
   const checkbox = ui?.chkWindFlow || document.querySelector('#chkWindFlow');
@@ -44,6 +83,15 @@ export function bindWindFlow(L, map, ui) {
 
   checkbox.checked = false;
   updateInfoLabel('Wind flow: Germany');
+
+  if (ui?.chkDark) {
+    ui.chkDark.addEventListener('change', () => {
+      if (velocityLayer && typeof velocityLayer.setOpacity === 'function') {
+        velocityLayer.setOpacity(VELOCITY_OPTIONS.opacity);
+        logWind('Dark mode toggled, reset opacity');
+      }
+    });
+  }
 
   checkbox.addEventListener('change', () => {
     if (checkbox.checked) enableLayer();
@@ -102,10 +150,8 @@ export function bindWindFlow(L, map, ui) {
   function applyWindData(payload, regionKey) {
     const region = REGION_SOURCES[regionKey] ?? { label: 'Region' };
 
-    console.log('applyWindData: payload:', payload);
-
     const velocityData = buildVelocityData(payload, map.getZoom());
-    console.log('applyWindData: velocityData:', velocityData);
+    logWind('applyWindData', { regionKey, zoom: map.getZoom(), hasData: !!velocityData });
 
     if (!velocityData) {
       updateInfoLabel(`Wind flow: ${region.label} (keine gültigen Daten)`);
@@ -125,23 +171,40 @@ export function bindWindFlow(L, map, ui) {
     };
 
     try {
-      // existierenden Layer aktualisieren oder neu erstellen
       if (velocityLayer && typeof velocityLayer.setData === 'function') {
+        // vorhandenen Layer aktualisieren
         velocityLayer.setData(velocityData);
         if (typeof velocityLayer.setOptions === 'function') {
-          velocityLayer.setOptions({ maxVelocity });
+          velocityLayer.setOptions({ maxVelocity, opacity: VELOCITY_OPTIONS.opacity });
         }
       } else {
+        // alten Layer entfernen, falls vorhanden
         if (velocityLayer && map.hasLayer(velocityLayer)) {
           map.removeLayer(velocityLayer);
         }
+        // neuen Layer erstellen
         velocityLayer = L.velocityLayer(layerOptions);
+        if (typeof velocityLayer.setOpacity === 'function') {
+          velocityLayer.setOpacity(VELOCITY_OPTIONS.opacity);
+        }
         map.addLayer(velocityLayer);
       }
     } catch (err) {
       console.error('Fehler beim Erzeugen/Aktualisieren des Wind-Layers:', err, layerOptions);
+      logWind('render-error', err?.message ?? err);
       updateInfoLabel(`Wind flow: ${region.label} (Render-Fehler, siehe Konsole)`);
       return;
+    }
+
+    // Map-Ausschnitt an die Region anpassen, wenn Bounds gesetzt sind
+    if (region.bounds && Array.isArray(region.bounds) && region.bounds.length === 2) {
+      try {
+        map.fitBounds(region.bounds, { padding: [20, 20] });
+        logWind('fitBounds', regionKey, region.bounds);
+      } catch (e) {
+        console.warn('Konnte Bounds für Region nicht anwenden:', regionKey, e);
+        logWind('fitBounds-error', regionKey, e?.message ?? e);
+      }
     }
 
     const timeText = formatTimeUtc(
@@ -174,7 +237,7 @@ export function bindWindFlow(L, map, ui) {
         return resp.json();
       })
       .then((json) => {
-        console.log('wind raw json:', json);
+        logWind('wind raw json', json?.meta?.updatedAt ?? json?.generated ?? '');
         if (!json) return null;
         const payload = {
           meta: json.meta ?? {},
@@ -182,12 +245,13 @@ export function bindWindFlow(L, map, ui) {
           field: json.field ?? null,
           generated: json.meta?.generated ?? json.generated ?? null
         };
-        console.log('wind payload built:', payload);
+        logWind('wind payload built', { regionKey, updatedAt: payload.meta?.updatedAt ?? payload.generated });
         payloadCache.set(regionKey, payload);
         return payload;
       })
       .catch((err) => {
         console.error('Winddaten konnten nicht geladen werden:', err);
+        logWind('fetch-error', regionKey, err?.message ?? err);
         return null;
       })
       .finally(() => {
