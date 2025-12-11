@@ -84,15 +84,6 @@ export function bindWindFlow(L, map, ui) {
   checkbox.checked = false;
   updateInfoLabel('Wind flow: Germany');
 
-  if (ui?.chkDark) {
-    ui.chkDark.addEventListener('change', () => {
-      if (velocityLayer && typeof velocityLayer.setOpacity === 'function') {
-        velocityLayer.setOpacity(VELOCITY_OPTIONS.opacity);
-        logWind('Dark mode toggled, reset opacity');
-      }
-    });
-  }
-
   checkbox.addEventListener('change', () => {
     if (checkbox.checked) enableLayer();
     else disableLayer();
@@ -175,7 +166,7 @@ export function bindWindFlow(L, map, ui) {
         // vorhandenen Layer aktualisieren
         velocityLayer.setData(velocityData);
         if (typeof velocityLayer.setOptions === 'function') {
-          velocityLayer.setOptions({ maxVelocity, opacity: VELOCITY_OPTIONS.opacity });
+          velocityLayer.setOptions({ maxVelocity });
         }
       } else {
         // alten Layer entfernen, falls vorhanden
@@ -184,14 +175,11 @@ export function bindWindFlow(L, map, ui) {
         }
         // neuen Layer erstellen
         velocityLayer = L.velocityLayer(layerOptions);
-        if (typeof velocityLayer.setOpacity === 'function') {
-          velocityLayer.setOpacity(VELOCITY_OPTIONS.opacity);
-        }
         map.addLayer(velocityLayer);
       }
     } catch (err) {
       console.error('Fehler beim Erzeugen/Aktualisieren des Wind-Layers:', err, layerOptions);
-      logWind('render-error', err?.message ?? err);
+      logWind('render-error', String(err));
       updateInfoLabel(`Wind flow: ${region.label} (Render-Fehler, siehe Konsole)`);
       return;
     }

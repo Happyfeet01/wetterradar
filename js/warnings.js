@@ -69,6 +69,10 @@ export function bind(L, map, ui){
   if (dom.chkNina?.checked) toggleNinaLayer(true);
 }
 
+function escapeAttributeValue(value){
+  return String(value ?? '').replace(/"/g, '\\"');
+}
+
 function bindCheckbox(el, storageKey, onChange){
   if (!el) return;
   const stored = localStorage.getItem(storageKey);
@@ -140,6 +144,9 @@ async function loadNinaWarnings(){
     refreshSidebar();
   }catch(err){
     console.warn('NINA warnings failed:', err);
+    if (err?.stack) {
+      console.warn(err.stack);
+    }
     renderEmpty(dom.listNina, 'Warnungen konnten nicht geladen werden.');
   }
 }
@@ -214,6 +221,10 @@ function buildNinaLayer(features){
         if (bounds && bounds.isValid()){
           mapRef.fitBounds(bounds, { maxZoom: mapRef.getMaxZoom() - 1 });
         }
+        const regionId = getNinaRegionId(feature);
+        if (regionId){
+          focusNinaCardByAgs(regionId);
+        }
       });
       const props = feature?.properties || {};
       const headline = props.headline || props.event || 'Warnung';
@@ -279,6 +290,10 @@ function createCard(warning, onClick){
   card.className = `warn-card warn-card--sev-${sev}`;
   card.style.borderLeftColor = sevColor;
   card.onclick = onClick;
+  const regionId = getNinaRegionId(warning.feature);
+  if (regionId){
+    card.dataset.ags = String(regionId);
+  }
 
   const header = document.createElement('div');
   header.className = 'warn-card__header';
@@ -317,6 +332,28 @@ function createCard(warning, onClick){
   return card;
 }
 
+function findNinaCardByAgs(agsRaw){
+  if (!dom.listNina) return null;
+  const ags = String(agsRaw ?? '');
+  if (!ags) return null;
+  const selector = `[data-ags="${escapeAttributeValue(ags)}"]`;
+  try{
+    return dom.listNina.querySelector(selector);
+  }catch(err){
+    console.warn('Fehler beim Selektieren eines NINA-Elements:', err);
+    if (err?.stack) console.warn(err.stack);
+    return null;
+  }
+}
+
+function focusNinaCardByAgs(agsRaw){
+  const card = findNinaCardByAgs(agsRaw);
+  if (!card) return;
+  card.scrollIntoView({ behavior:'smooth', block:'center' });
+  card.classList.add('warn-card--active');
+  setTimeout(() => card.classList.remove('warn-card--active'), 1500);
+}
+
 function normalizeDwdFeature(feature){
   const props = feature?.properties || {};
   const severity = parseSeverity(props);
@@ -346,6 +383,11 @@ function normalizeNinaFeature(feature){
     start: props.onset || props.effective || '',
     end: props.expires || ''
   };
+}
+
+function getNinaRegionId(feature){
+  const props = feature?.properties || {};
+  return props.ags ?? props.regionId ?? props.rs ?? props.regionCode ?? '';
 }
 
 function parseSeverity(props){
