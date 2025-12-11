@@ -204,11 +204,11 @@ function buildVelocityData(points, generated) {
       const point = pointLookup.get(`${lat}:${lon}`);
       if (!point) continue;
 
-      // Windrichtung in U/V (Richtung in Grad, meteorologisch, deshalb 180° versetzen)
+      // Windrichtung in U/V (Richtung in Grad, meteorologisch: Richtung AUS der der Wind kommt)
       const speed = Number(point.speed) || 0;
-      const dirRad = ((Number(point.dir) || 0) + 180) * (Math.PI / 180);
-      const uVal = speed * Math.cos(dirRad);
-      const vVal = speed * Math.sin(dirRad);
+      const dirRad = (Number(point.dir) || 0) * (Math.PI / 180);
+      const uVal = -speed * Math.sin(dirRad);
+      const vVal = -speed * Math.cos(dirRad);
       u[idx] = uVal;
       v[idx] = vVal;
     }
