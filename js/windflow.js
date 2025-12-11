@@ -1,8 +1,8 @@
 // Windströmung-Layer mit auswählbaren Regionen und zoom-abhängigem Downsampling
 const REGION_SOURCES = {
-  germany: { label: 'Germany', path: '/data/wind-germany.json' },
-  europe: { label: 'Europe', path: '/data/wind-europe.json' },
-  world: { label: 'World', path: '/data/wind-global.json' }
+  germany: { label: 'Germany', path: '/wind/current.json' },
+  europe: { label: 'Europe', path: '/wind/current.json' },
+  world: { label: 'World', path: '/wind/current.json' }
 };
 
 // Anteil der Punkte je Zoomstufe (über Modulo stabil und deterministisch)
@@ -15,11 +15,11 @@ const ZOOM_SAMPLING = [
 // Optionen der Velocity-Layer für ein ruhiges Partikelfeld
 const VELOCITY_OPTIONS = {
   maxVelocity: 25,
-  velocityScale: 0.008,
+  velocityScale: 0.002,
   particleAge: 60,
-  particleMultiplier: 0.012,
+  particleMultiplier: 1 / 400,
   frameRate: 20,
-  lineWidth: 1.2,
+  lineWidth: 1,
   velocityType: '10m Wind',
   speedUnit: 'm/s'
 };
@@ -98,15 +98,15 @@ export function bindWindFlow(L, map, ui) {
   }
 
   function applyWindData(payload, regionKey) {
-    const sampledPoints = samplePointsForZoom(payload.points, map.getZoom());
-    const velocityData = buildVelocityData(sampledPoints, payload.generated);
+    const velocityData = buildVelocityData(payload, map.getZoom());
 
     if (!velocityData) {
       updateInfoLabel(`Wind flow: ${REGION_SOURCES[regionKey]?.label ?? 'Region'} (Daten fehlerhaft)`);
       return;
     }
 
-    const layerOptions = { ...VELOCITY_OPTIONS, data: velocityData };
+    const maxVelocity = payload?.meta?.stats?.maxVelocity ?? VELOCITY_OPTIONS.maxVelocity;
+    const layerOptions = { ...VELOCITY_OPTIONS, maxVelocity, data: velocityData };
 
     if (velocityLayer && typeof velocityLayer.setData === 'function') {
       velocityLayer.setData(velocityData);
@@ -118,7 +118,7 @@ export function bindWindFlow(L, map, ui) {
       map.addLayer(velocityLayer);
     }
 
-    const timeText = formatTimeUtc(payload.generated);
+    const timeText = formatTimeUtc(payload.meta?.updatedAt ?? payload.generated);
     updateInfoLabel(`Wind flow: ${REGION_SOURCES[regionKey]?.label ?? 'Region'}${timeText ? ` (updated ${timeText} UTC)` : ''}`);
   }
 
@@ -135,14 +135,19 @@ export function bindWindFlow(L, map, ui) {
       return Promise.resolve(null);
     }
 
-    const promise = fetch(source.path, { cache: 'force-cache' })
+    const promise = fetch(source.path, { cache: 'no-store' })
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json();
       })
       .then((json) => {
-        if (!json || !Array.isArray(json.points)) return null;
-        const payload = { generated: json.generated || null, points: json.points };
+        if (!json) return null;
+        const payload = {
+          meta: json.meta ?? {},
+          data: json.data ?? json.field ?? null,
+          points: json.points ?? null,
+          generated: json.meta?.generated ?? json.generated ?? null
+        };
         payloadCache.set(regionKey, payload);
         return payload;
       })
@@ -159,25 +164,20 @@ export function bindWindFlow(L, map, ui) {
   }
 }
 
-function samplePointsForZoom(points = [], zoom = 0) {
-  const step = getSampleStep(zoom);
-  if (step <= 1) return points;
-  return points.filter((_, idx) => idx % step === 0);
-}
+function buildVelocityData(payload, zoom) {
+  if (!payload) return null;
 
-function getSampleStep(zoom) {
-  for (const rule of ZOOM_SAMPLING) {
-    if (zoom <= rule.maxZoom) return Math.max(1, rule.step);
-  }
-  return 1;
-}
+  const directField = payload.data ?? payload.field;
+  if (Array.isArray(directField) && directField.length) return directField;
 
-function buildVelocityData(points, generated) {
-  if (!points?.length) return null;
+  const sampledPoints = samplePointsForZoom(payload.points, zoom);
+  if (!sampledPoints?.length) return null;
+
+  const generated = payload.generated;
 
   // Grid aus vorhandenen Punkten ableiten; sortiert sorgt für deterministisches Mapping
-  const lats = Array.from(new Set(points.map((p) => Number(p.lat)))).sort((a, b) => b - a); // Nord -> Süd
-  const lons = Array.from(new Set(points.map((p) => Number(p.lon)))).sort((a, b) => a - b); // West -> Ost
+  const lats = Array.from(new Set(sampledPoints.map((p) => Number(p.lat)))).sort((a, b) => b - a); // Nord -> Süd
+  const lons = Array.from(new Set(sampledPoints.map((p) => Number(p.lon)))).sort((a, b) => a - b); // West -> Ost
 
   const latStep = lats.length > 1 ? Math.min(...diffs(lats.slice().reverse())) : 1;
   const lonStep = lons.length > 1 ? Math.min(...diffs(lons)) : 1;
@@ -191,7 +191,7 @@ function buildVelocityData(points, generated) {
 
   // Map für schnellen Zugriff
   const pointLookup = new Map();
-  for (const p of points) {
+  for (const p of sampledPoints) {
     const key = `${p.lat}:${p.lon}`;
     pointLookup.set(key, p);
   }
@@ -231,6 +231,19 @@ function buildVelocityData(points, generated) {
     { header: { ...baseHeader, parameterNumber: 2 }, data: u },
     { header: { ...baseHeader, parameterNumber: 3 }, data: v }
   ];
+}
+
+function samplePointsForZoom(points = [], zoom = 0) {
+  const step = getSampleStep(zoom);
+  if (step <= 1) return points;
+  return points.filter((_, idx) => idx % step === 0);
+}
+
+function getSampleStep(zoom) {
+  for (const rule of ZOOM_SAMPLING) {
+    if (zoom <= rule.maxZoom) return Math.max(1, rule.step);
+  }
+  return 1;
 }
 
 function formatTimeUtc(isoString) {
