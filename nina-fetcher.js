@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import fs from 'fs/promises';
+import fs from 'fs';
+import https from 'https';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -10,16 +11,17 @@ const fetchFn = globalThis.fetch
       return fetch(...args);
     };
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, 'data');
-const REGION_FILE = path.join(DATA_DIR, 'Regionalschluessel_2021-07-31.json');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const dataDir = path.join(__dirname, 'data');
+const localRegionFile = path.join(dataDir, 'Regionalschluessel_2021-07-31.json');
 const OUTPUT_DIR = path.join(__dirname, 'warnings');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'nina.geojson');
-const REGION_URLS = [
-  process.env.NINA_REGION_URL,
-  'https://warnung.bund.de/assets/Regionalschluessel_2021-07-31.json',
-  'https://nina.api.proxy.bund.dev/assets/Regionalschluessel_2021-07-31.json'
-].filter(Boolean);
+
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
 
 const API_BASE = 'https://nina.api.proxy.bund.dev/api31';
 const USER_AGENT =
@@ -40,128 +42,122 @@ function log(msg) {
   console.log(`[nina] ${msg}`);
 }
 
-async function downloadRegionFile(url) {
-  log(`Regionalschlüssel nicht gefunden – lade von ${url} ...`);
+const REGION_URL =
+  'https://www.xrepository.de/api/xrepository/urn:de:bund:destatis:bevoelkerungsstatistik:schluessel:rs_2021-07-31/download/Regionalschl_ssel_2021-07-31.json';
 
-  const res = await fetchFn(url, {
-    headers: {
-      'User-Agent': USER_AGENT,
-      Accept: 'application/json',
-      Referer: 'https://warnung.bund.de/'
-    },
-    cache: 'no-store'
+function downloadRegionKeysFromXRepo() {
+  console.log('[nina] Regionalschlüssel nicht gefunden – lade von XRepository...');
+
+  return new Promise((resolve, reject) => {
+    https.get(REGION_URL, res => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode} von XRepository`));
+        res.resume();
+        return;
+      }
+
+      const contentType = res.headers['content-type'] || '';
+      if (!contentType.includes('application/json')) {
+        console.warn(`[nina] Warnung: XRepository content-type ist ${contentType}, erwarte application/json`);
+      }
+
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => (data += chunk));
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          fs.writeFileSync(localRegionFile, data, 'utf8');
+          console.log('[nina] Regionalschlüssel gespeichert unter data/Regionalschluessel_2021-07-31.json');
+          resolve(json);
+        } catch (err) {
+          reject(new Error(`Antwort ist kein gültiges JSON: ${err.message}`));
+        }
+      });
+    }).on('error', err => {
+      reject(err);
+    });
   });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 160)}`);
-  }
-
-  const contentType = res.headers?.get('content-type') || '';
-  if (!contentType.toLowerCase().includes('json')) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Antwort ist kein JSON (${contentType || 'unbekannt'}): ${text.slice(0, 160)}`);
-  }
-
-  const buffer = Buffer.from(await res.arrayBuffer());
-  await fs.writeFile(REGION_FILE, buffer);
-  log('Regionalschlüssel gespeichert unter data/Regionalschluessel_2021-07-31.json');
 }
 
-async function ensureRegionFile() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+async function loadRegionKeys() {
+  let json = null;
 
-  try {
-    await fs.access(REGION_FILE);
-    log('Lade Regionalschlüssel aus data/Regionalschluessel_2021-07-31.json ...');
-    return true;
-  } catch {
-    // Datei fehlt, weiter unten wird versucht zu laden
-  }
-
-  for (const url of REGION_URLS) {
+  if (fs.existsSync(localRegionFile)) {
+    console.log('[nina] Lade Regionalschlüssel aus data/Regionalschluessel_2021-07-31.json ...');
     try {
-      await downloadRegionFile(url);
-      return true;
+      const raw = await fs.promises.readFile(localRegionFile, 'utf8');
+      if (raw.trim().startsWith('<!doctype html') || raw.trim().startsWith('<html')) {
+        console.warn('[nina] Inhalt von data/Regionalschluessel_2021-07-31.json ist HTML, kein JSON – Datei wird neu geladen.');
+        fs.unlinkSync(localRegionFile);
+      } else {
+        json = JSON.parse(raw);
+      }
     } catch (err) {
-      log(`Fehler beim Laden der Regionalschlüssel von ${url}: ${err.message}`);
+      console.warn('[nina] Fehler beim Laden der Regionalschlüssel (lokal):', err);
+      try {
+        fs.unlinkSync(localRegionFile);
+      } catch {}
+      json = null;
     }
   }
 
-  log('Regionalschlüssel konnten von keiner Quelle geladen werden.');
-  return false;
+  if (!json) {
+    try {
+      json = await downloadRegionKeysFromXRepo();
+    } catch (err) {
+      console.error('[nina] Fehler beim Laden der Regionalschlüssel von XRepository:', err);
+      console.error('[nina] Regionalschlüssel konnten nicht geladen werden – Abbruch.');
+      process.exitCode = 1;
+      return null;
+    }
+  }
+
+  let count = 0;
+  let example = null;
+
+  if (Array.isArray(json)) {
+    count = json.length;
+    example = json[0] ?? null;
+  } else if (json && typeof json === 'object') {
+    const keys = Object.keys(json);
+    count = keys.length;
+    example = keys.length ? { key: keys[0], value: json[keys[0]] } : null;
+  }
+
+  console.log(`[nina] Regionalschlüssel erfolgreich geladen (${count} Einträge)`);
+  if (example) {
+    console.log('[nina] Sanity-Check Regionalschlüssel: Beispiel-Eintrag:', example);
+  }
+
+  return json;
 }
 
 async function readRegionFile() {
-  const available = await ensureRegionFile();
-  if (!available) {
+  const json = await loadRegionKeys();
+  if (!json) {
+    return [];
+  }
+
+  const entries = Array.isArray(json)
+    ? json
+    : Array.isArray(json?.features)
+      ? json.features.map((f) => ({ ...f.properties, geometry: f.geometry }))
+      : Array.isArray(json?.data)
+        ? json.data
+        : [];
+
+  if (!entries.length) {
+    console.error('[nina] Regionalschlüssel-Datei enthält keine Einträge');
     process.exitCode = 1;
     return [];
   }
 
-  async function parseRegionFile() {
-    const raw = await fs.readFile(REGION_FILE, 'utf8');
-    return JSON.parse(raw);
-  }
+  const regions = entries
+    .map(extractRegion)
+    .filter((r) => r && typeof r.rs === 'string' && r.rs.length >= 5);
 
-  try {
-    const json = await parseRegionFile();
-    const entries = Array.isArray(json)
-      ? json
-      : Array.isArray(json?.features)
-        ? json.features.map((f) => ({ ...f.properties, geometry: f.geometry }))
-        : Array.isArray(json?.data)
-          ? json.data
-          : [];
-
-    if (!entries.length) {
-      throw new Error('Regionalschlüssel-Datei enthält keine Einträge');
-    }
-
-    const regions = entries
-      .map(extractRegion)
-      .filter((r) => r && typeof r.rs === 'string' && r.rs.length >= 5);
-
-    log(`Regionalschlüssel erfolgreich geladen (${regions.length} Einträge)`);
-    return regions;
-  } catch (err) {
-    log(`Fehler beim Laden der Regionalschlüssel: ${err.message}`);
-
-    // Datei könnte HTML enthalten – versuche erneuten Download mit Bereinigung
-    try {
-      await fs.unlink(REGION_FILE);
-    } catch {
-      // ignore
-    }
-
-    const refreshed = await ensureRegionFile();
-    if (refreshed) {
-      try {
-        const retryJson = await parseRegionFile();
-        const entries = Array.isArray(retryJson)
-          ? retryJson
-          : Array.isArray(retryJson?.features)
-            ? retryJson.features.map((f) => ({ ...f.properties, geometry: f.geometry }))
-            : Array.isArray(retryJson?.data)
-              ? retryJson.data
-              : [];
-
-        const regions = entries
-          .map(extractRegion)
-          .filter((r) => r && typeof r.rs === 'string' && r.rs.length >= 5);
-
-        if (regions.length) {
-          log(`Regionalschlüssel nach erneuten Download geladen (${regions.length} Einträge)`);
-          return regions;
-        }
-      } catch (retryErr) {
-        log(`Erneuter Leseversuch der Regionalschlüssel fehlgeschlagen: ${retryErr.message}`);
-      }
-    }
-
-    process.exitCode = 1;
-    return [];
-  }
+  return regions;
 }
 
 function extractRegion(entry) {
@@ -399,7 +395,7 @@ function geometryCenter(geometry) {
 }
 
 async function ensureOutputDir() {
-  await fs.mkdir(OUTPUT_DIR, { recursive: true });
+  await fs.promises.mkdir(OUTPUT_DIR, { recursive: true });
 }
 
 async function writeGeojson(features, regionsCount) {
@@ -416,8 +412,8 @@ async function writeGeojson(features, regionsCount) {
   };
 
   const tmpPath = `${OUTPUT_FILE}.tmp`;
-  await fs.writeFile(tmpPath, JSON.stringify(payload, null, 2));
-  await fs.rename(tmpPath, OUTPUT_FILE);
+  await fs.promises.writeFile(tmpPath, JSON.stringify(payload, null, 2));
+  await fs.promises.rename(tmpPath, OUTPUT_FILE);
 }
 
 function buildFeature(warning) {
