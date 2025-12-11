@@ -15,11 +15,15 @@ const DATA_DIR = path.join(__dirname, 'data');
 const REGION_FILE = path.join(DATA_DIR, 'Regionalschluessel_2021-07-31.json');
 const OUTPUT_DIR = path.join(__dirname, 'warnings');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'nina.geojson');
-const REGION_URL =
-  process.env.NINA_REGION_URL || 'https://warnung.bund.de/assets/Regionalschluessel_2021-07-31.json';
+const REGION_URLS = [
+  process.env.NINA_REGION_URL,
+  'https://warnung.bund.de/assets/Regionalschluessel_2021-07-31.json',
+  'https://nina.api.proxy.bund.dev/assets/Regionalschluessel_2021-07-31.json'
+].filter(Boolean);
 
 const API_BASE = 'https://nina.api.proxy.bund.dev/api31';
-const USER_AGENT = 'wetterradar/1.0 (+https://wetter.larsmueller.net/)';
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 wetterradar/1.0 (+https://wetter.larsmueller.net/)';
 const SELECTED_STATE_CODES = (process.env.NINA_STATE_CODES || '06,09')
   .split(',')
   .map((s) => s.trim())
@@ -36,6 +40,34 @@ function log(msg) {
   console.log(`[nina] ${msg}`);
 }
 
+async function downloadRegionFile(url) {
+  log(`Regionalschlüssel nicht gefunden – lade von ${url} ...`);
+
+  const res = await fetchFn(url, {
+    headers: {
+      'User-Agent': USER_AGENT,
+      Accept: 'application/json',
+      Referer: 'https://warnung.bund.de/'
+    },
+    cache: 'no-store'
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 160)}`);
+  }
+
+  const contentType = res.headers?.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('json')) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Antwort ist kein JSON (${contentType || 'unbekannt'}): ${text.slice(0, 160)}`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  await fs.writeFile(REGION_FILE, buffer);
+  log('Regionalschlüssel gespeichert unter data/Regionalschluessel_2021-07-31.json');
+}
+
 async function ensureRegionFile() {
   await fs.mkdir(DATA_DIR, { recursive: true });
 
@@ -47,26 +79,17 @@ async function ensureRegionFile() {
     // Datei fehlt, weiter unten wird versucht zu laden
   }
 
-  try {
-    log(`Regionalschlüssel nicht gefunden – lade von ${REGION_URL} ...`);
-    const res = await fetchFn(REGION_URL, {
-      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
-      cache: 'no-store'
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status} ${res.statusText}: ${text.slice(0, 160)}`);
+  for (const url of REGION_URLS) {
+    try {
+      await downloadRegionFile(url);
+      return true;
+    } catch (err) {
+      log(`Fehler beim Laden der Regionalschlüssel von ${url}: ${err.message}`);
     }
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    await fs.writeFile(REGION_FILE, buffer);
-    log('Regionalschlüssel gespeichert unter data/Regionalschluessel_2021-07-31.json');
-    return true;
-  } catch (err) {
-    log(`Fehler beim Laden der Regionalschlüssel: ${err.message}`);
-    return false;
   }
+
+  log('Regionalschlüssel konnten von keiner Quelle geladen werden.');
+  return false;
 }
 
 async function readRegionFile() {
@@ -76,9 +99,13 @@ async function readRegionFile() {
     return [];
   }
 
-  try {
+  async function parseRegionFile() {
     const raw = await fs.readFile(REGION_FILE, 'utf8');
-    const json = JSON.parse(raw);
+    return JSON.parse(raw);
+  }
+
+  try {
+    const json = await parseRegionFile();
     const entries = Array.isArray(json)
       ? json
       : Array.isArray(json?.features)
@@ -99,6 +126,39 @@ async function readRegionFile() {
     return regions;
   } catch (err) {
     log(`Fehler beim Laden der Regionalschlüssel: ${err.message}`);
+
+    // Datei könnte HTML enthalten – versuche erneuten Download mit Bereinigung
+    try {
+      await fs.unlink(REGION_FILE);
+    } catch {
+      // ignore
+    }
+
+    const refreshed = await ensureRegionFile();
+    if (refreshed) {
+      try {
+        const retryJson = await parseRegionFile();
+        const entries = Array.isArray(retryJson)
+          ? retryJson
+          : Array.isArray(retryJson?.features)
+            ? retryJson.features.map((f) => ({ ...f.properties, geometry: f.geometry }))
+            : Array.isArray(retryJson?.data)
+              ? retryJson.data
+              : [];
+
+        const regions = entries
+          .map(extractRegion)
+          .filter((r) => r && typeof r.rs === 'string' && r.rs.length >= 5);
+
+        if (regions.length) {
+          log(`Regionalschlüssel nach erneuten Download geladen (${regions.length} Einträge)`);
+          return regions;
+        }
+      } catch (retryErr) {
+        log(`Erneuter Leseversuch der Regionalschlüssel fehlgeschlagen: ${retryErr.message}`);
+      }
+    }
+
     process.exitCode = 1;
     return [];
   }
