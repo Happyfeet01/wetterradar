@@ -12,16 +12,18 @@ const ZOOM_SAMPLING = [
   { maxZoom: Infinity, step: 1 } // 100 %
 ];
 
-// Optionen der Velocity-Layer für ein ruhiges Partikelfeld
+// Optionen der Velocity-Layer für ein ruhigeres Partikelfeld
 const VELOCITY_OPTIONS = {
-  maxVelocity: 25,
-  velocityScale: 0.002,
-  particleAge: 60,
-  particleMultiplier: 1 / 400,
-  frameRate: 20,
-  lineWidth: 1,
-  velocityType: '10m Wind',
-  speedUnit: 'm/s'
+  maxVelocity: 25, // wird später dynamisch über meta.stats.maxVelocity überschrieben
+  velocityScale: 0.002, // kleiner = langsamere Partikel
+  particleAge: 60, // etwas kürzer
+  lineWidth: 1, // dünner
+  particleMultiplier: 1 / 400, // weniger Partikel
+  displayValues: false,
+  displayOptions: {
+    velocityType: 'Wind',
+    position: 'bottomleft'
+  }
 };
 
 export function bindWindFlow(L, map, ui) {
@@ -98,28 +100,59 @@ export function bindWindFlow(L, map, ui) {
   }
 
   function applyWindData(payload, regionKey) {
+    const region = REGION_SOURCES[regionKey] ?? { label: 'Region' };
+
+    console.log('applyWindData: payload:', payload);
+
     const velocityData = buildVelocityData(payload, map.getZoom());
+    console.log('applyWindData: velocityData:', velocityData);
 
     if (!velocityData) {
-      updateInfoLabel(`Wind flow: ${REGION_SOURCES[regionKey]?.label ?? 'Region'} (Daten fehlerhaft)`);
-      return;
-    }
-
-    const maxVelocity = payload?.meta?.stats?.maxVelocity ?? VELOCITY_OPTIONS.maxVelocity;
-    const layerOptions = { ...VELOCITY_OPTIONS, maxVelocity, data: velocityData };
-
-    if (velocityLayer && typeof velocityLayer.setData === 'function') {
-      velocityLayer.setData(velocityData);
-    } else {
+      updateInfoLabel(`Wind flow: ${region.label} (keine gültigen Daten)`);
       if (velocityLayer && map.hasLayer(velocityLayer)) {
         map.removeLayer(velocityLayer);
       }
-      velocityLayer = L.velocityLayer(layerOptions);
-      map.addLayer(velocityLayer);
+      return;
     }
 
-    const timeText = formatTimeUtc(payload.meta?.updatedAt ?? payload.generated);
-    updateInfoLabel(`Wind flow: ${REGION_SOURCES[regionKey]?.label ?? 'Region'}${timeText ? ` (updated ${timeText} UTC)` : ''}`);
+    const maxVelocity =
+      payload?.meta?.stats?.maxVelocity ?? VELOCITY_OPTIONS.maxVelocity;
+
+    const layerOptions = {
+      ...VELOCITY_OPTIONS,
+      data: velocityData,
+      maxVelocity
+    };
+
+    try {
+      // existierenden Layer aktualisieren oder neu erstellen
+      if (velocityLayer && typeof velocityLayer.setData === 'function') {
+        velocityLayer.setData(velocityData);
+        if (typeof velocityLayer.setOptions === 'function') {
+          velocityLayer.setOptions({ maxVelocity });
+        }
+      } else {
+        if (velocityLayer && map.hasLayer(velocityLayer)) {
+          map.removeLayer(velocityLayer);
+        }
+        velocityLayer = L.velocityLayer(layerOptions);
+        map.addLayer(velocityLayer);
+      }
+    } catch (err) {
+      console.error('Fehler beim Erzeugen/Aktualisieren des Wind-Layers:', err, layerOptions);
+      updateInfoLabel(`Wind flow: ${region.label} (Render-Fehler, siehe Konsole)`);
+      return;
+    }
+
+    const timeText = formatTimeUtc(
+      payload.meta?.updatedAt ?? payload.generated ?? null
+    );
+
+    updateInfoLabel(
+      `Wind flow: ${region.label}${
+        timeText ? ` (updated ${timeText} UTC)` : ''
+      }`
+    );
   }
 
   function getWindData(regionKey, forceReload = false) {
@@ -141,13 +174,15 @@ export function bindWindFlow(L, map, ui) {
         return resp.json();
       })
       .then((json) => {
+        console.log('wind raw json:', json);
         if (!json) return null;
         const payload = {
           meta: json.meta ?? {},
           data: json.data ?? json.field ?? null,
-          points: json.points ?? null,
+          field: json.field ?? null,
           generated: json.meta?.generated ?? json.generated ?? null
         };
+        console.log('wind payload built:', payload);
         payloadCache.set(regionKey, payload);
         return payload;
       })
@@ -162,75 +197,37 @@ export function bindWindFlow(L, map, ui) {
     loadPromises.set(regionKey, promise);
     return promise;
   }
+
 }
 
 function buildVelocityData(payload, zoom) {
   if (!payload) return null;
 
-  const directField = payload.data ?? payload.field;
-  if (Array.isArray(directField) && directField.length) return directField;
-
-  const sampledPoints = samplePointsForZoom(payload.points, zoom);
-  if (!sampledPoints?.length) return null;
-
-  const generated = payload.generated;
-
-  // Grid aus vorhandenen Punkten ableiten; sortiert sorgt für deterministisches Mapping
-  const lats = Array.from(new Set(sampledPoints.map((p) => Number(p.lat)))).sort((a, b) => b - a); // Nord -> Süd
-  const lons = Array.from(new Set(sampledPoints.map((p) => Number(p.lon)))).sort((a, b) => a - b); // West -> Ost
-
-  const latStep = lats.length > 1 ? Math.min(...diffs(lats.slice().reverse())) : 1;
-  const lonStep = lons.length > 1 ? Math.min(...diffs(lons)) : 1;
-
-  const nx = lons.length;
-  const ny = lats.length;
-  if (nx === 0 || ny === 0) return null;
-
-  const u = new Array(nx * ny).fill(0);
-  const v = new Array(nx * ny).fill(0);
-
-  // Map für schnellen Zugriff
-  const pointLookup = new Map();
-  for (const p of sampledPoints) {
-    const key = `${p.lat}:${p.lon}`;
-    pointLookup.set(key, p);
+  // Fall A: neue Struktur (current.json) mit data-Array (GRIB-ähnlich)
+  if (
+    Array.isArray(payload.data) &&
+    payload.data.length >= 2 &&
+    payload.data[0] &&
+    payload.data[0].header &&
+    Array.isArray(payload.data[0].data)
+  ) {
+    return payload.data;
   }
 
-  for (let y = 0; y < ny; y++) {
-    for (let x = 0; x < nx; x++) {
-      const lat = lats[y];
-      const lon = lons[x];
-      const idx = y * nx + x;
-      const point = pointLookup.get(`${lat}:${lon}`);
-      if (!point) continue;
-
-      // Windrichtung in U/V (Richtung in Grad, meteorologisch: Richtung AUS der der Wind kommt)
-      const speed = Number(point.speed) || 0;
-      const dirRad = (Number(point.dir) || 0) * (Math.PI / 180);
-      const uVal = -speed * Math.sin(dirRad);
-      const vVal = -speed * Math.cos(dirRad);
-      u[idx] = uVal;
-      v[idx] = vVal;
-    }
+  // Fall B: älteres field-Format
+  if (
+    Array.isArray(payload.field) &&
+    payload.field.length &&
+    payload.field[0] &&
+    payload.field[0].header &&
+    Array.isArray(payload.field[0].data)
+  ) {
+    return payload.field;
   }
 
-  const baseHeader = {
-    parameterCategory: 2,
-    nx,
-    ny,
-    lo1: lons[0],
-    lo2: lons[nx - 1],
-    la1: lats[0],
-    la2: lats[ny - 1],
-    dx: lonStep,
-    dy: latStep,
-    refTime: generated || new Date().toISOString()
-  };
-
-  return [
-    { header: { ...baseHeader, parameterNumber: 2 }, data: u },
-    { header: { ...baseHeader, parameterNumber: 3 }, data: v }
-  ];
+  // Alles andere ignorieren
+  console.warn('buildVelocityData: keine passenden Winddaten erkannt:', payload);
+  return null;
 }
 
 function samplePointsForZoom(points = [], zoom = 0) {
