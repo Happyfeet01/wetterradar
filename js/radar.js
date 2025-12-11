@@ -1,4 +1,4 @@
-import { RV_API, RV_HOST_FALLBACK, RADAR_SIZE, PLAY_FADE_MS } from './config.js';
+import { RV_API, RV_HOST_FALLBACK, RADAR_SIZE, RADAR_ZOOM_OFFSET, PLAY_FADE_MS } from './config.js';
 
 let RV_HOST = RV_HOST_FALLBACK;
 let frames = [];
@@ -35,7 +35,8 @@ export function paint(L, map, ui, syncCloudsCb){
   const f = frames[idx]; if(!f) return;
   if(next){ map.removeLayer(next); next=null; }
   next = L.tileLayer(radarUrl(f, ui), {
-    pane:'radarPane', tileSize:RADAR_SIZE, opacity:0, className:'rv-tiles',
+    pane:'radarPane', tileSize:RADAR_SIZE, zoomOffset:RADAR_ZOOM_OFFSET,
+    opacity:0, className:'rv-tiles',
     updateWhenZooming:false, updateWhenIdle:true, keepBuffer:4, attribution:'Radar © RainViewer'
   }).addTo(map);
 
