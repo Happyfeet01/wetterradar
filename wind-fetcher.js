@@ -177,46 +177,85 @@ function toVector(speed, directionDeg) {
   };
 }
 
-async function fetchPoint(lat, lon, targetTime) {
+const MAX_BATCH_SIZE = 1000;
+const batchDelayMs = Math.max(requestDelayMs, 200);
+
+function buildGridPoints() {
+  const points = [];
+  let idx = 0;
+  for (const lat of latitudes) {
+    for (const lon of longitudes) {
+      points.push({ lat, lon, idx });
+      idx += 1;
+    }
+  }
+  return points;
+}
+
+function chunkPoints(points, size) {
+  const chunks = [];
+  for (let i = 0; i < points.length; i += size) {
+    chunks.push(points.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function fetchBatch(points) {
   const url = new URL(apiBase);
-  url.searchParams.set('latitude', lat.toFixed(3));
-  url.searchParams.set('longitude', lon.toFixed(3));
+  url.searchParams.set('latitude', points.map((p) => p.lat.toFixed(3)).join(','));
+  url.searchParams.set('longitude', points.map((p) => p.lon.toFixed(3)).join(','));
   url.searchParams.set('hourly', hourlyParams);
-  url.searchParams.set('forecast_days', String(apiForecastDays));
+  url.searchParams.set('forecast_hours', '1');
   url.searchParams.set('timezone', apiTimezone);
-  url.searchParams.set('windspeed_unit', 'ms');
-  url.searchParams.set('past_days', '0');
+  url.searchParams.set('wind_speed_unit', 'ms');
 
   const res = await fetchFn(url, { cache: 'no-store' });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Open-Meteo ${res.status} ${res.statusText}: ${text.slice(0, 160)}`);
   }
-  const json = await res.json();
-  const times = json?.hourly?.time;
-  const speeds = json?.hourly?.wind_speed_10m;
-  const dirs = json?.hourly?.wind_direction_10m;
 
-  if (!Array.isArray(times) || !Array.isArray(speeds) || !Array.isArray(dirs)) {
-    throw new Error('Antwort ohne stündliche Winddaten');
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Unerwarteter Content-Type: ${contentType}`);
   }
 
-  let index = 0;
-  if (targetTime) {
-    const found = times.indexOf(targetTime);
-    if (found >= 0) {
-      index = found;
+  const json = await res.json();
+  const locations = Array.isArray(json) ? json : [json];
+
+  if (locations.length !== points.length) {
+    throw new Error(
+      `Antwortanzahl (${locations.length}) passt nicht zu angefragten Punkten (${points.length})`
+    );
+  }
+
+  const entries = [];
+  let datasetTime = null;
+
+  for (let i = 0; i < points.length; i++) {
+    const loc = locations[i];
+    const times = loc?.hourly?.time;
+    const speeds = loc?.hourly?.wind_speed_10m;
+    const dirs = loc?.hourly?.wind_direction_10m;
+
+    if (!Array.isArray(times) || !Array.isArray(speeds) || !Array.isArray(dirs)) {
+      throw new Error('Antwort ohne stündliche Winddaten');
+    }
+
+    const speed = speeds[0];
+    const direction = dirs[0];
+    if (speed == null || direction == null) {
+      throw new Error('Winddaten fehlen (NaN)');
+    }
+
+    const { u, v } = toVector(speed, direction);
+    entries.push({ ...points[i], u, v });
+    if (!datasetTime) {
+      datasetTime = times[0];
     }
   }
 
-  const speed = speeds[index];
-  const direction = dirs[index];
-  if (speed == null || direction == null) {
-    throw new Error('Winddaten fehlen (NaN)');
-  }
-
-  const { u, v } = toVector(speed, direction);
-  return { u, v, datasetTime: times[index] };
+  return { entries, datasetTime };
 }
 
 function buildHeaders(datasetTimeIso) {
@@ -251,23 +290,27 @@ async function writeJson(filePath, payload) {
 }
 
 async function buildField() {
-  const uData = [];
-  const vData = [];
+  const uData = new Array(totalPoints);
+  const vData = new Array(totalPoints);
   let datasetTime = null;
 
-  let idx = 0;
-  for (const lat of latitudes) {
-    for (const lon of longitudes) {
-      const point = await fetchPoint(lat, lon, datasetTime);
-      if (!datasetTime) {
-        datasetTime = point.datasetTime;
-      }
-      uData[idx] = point.u;
-      vData[idx] = point.v;
-      idx += 1;
-      if (requestDelayMs) {
-        await sleep(requestDelayMs);
-      }
+  const points = buildGridPoints();
+  const batches = chunkPoints(points, MAX_BATCH_SIZE);
+
+  for (let i = 0; i < batches.length; i++) {
+    const { entries, datasetTime: batchTime } = await fetchBatch(batches[i]);
+
+    if (!datasetTime && batchTime) {
+      datasetTime = batchTime;
+    }
+
+    for (const entry of entries) {
+      uData[entry.idx] = entry.u;
+      vData[entry.idx] = entry.v;
+    }
+
+    if (i < batches.length - 1 && batchDelayMs) {
+      await sleep(batchDelayMs);
     }
   }
 
