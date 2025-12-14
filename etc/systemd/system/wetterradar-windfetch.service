@@ -9,7 +9,7 @@ User=www-data
 WorkingDirectory=/var/www/wetterradar
 ExecStart=/usr/bin/node /var/www/wetterradar/wind-fetcher.js --region germany --out /var/www/wetterradar/data/wind-germany.json --ttl-hours 6
 ExecStart=/usr/bin/node /var/www/wetterradar/wind-fetcher.js --region europe --out /var/www/wetterradar/data/wind-europe.json --ttl-hours 6
-ExecStart=/usr/bin/node /var/www/wetterradar/wind-fetcher.js --region world --out /var/www/wetterradar/data/wind-global.json --ttl-hours 6
+ExecStart=/usr/bin/node /var/www/wetterradar/wind-fetcher.js --region world --out /var/www/wetterradar/data/wind-global.json --ttl-hours 6 --also-write-current /var/www/wetterradar/wind/global.json
 
 [Install]
 WantedBy=multi-user.target
