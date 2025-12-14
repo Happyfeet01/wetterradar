@@ -1,0 +1,11 @@
+[Unit]
+Description=Wetterradar Wind Fetcher timer
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:05:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=wetterradar-windfetch.service
+
+[Install]
+WantedBy=timers.target

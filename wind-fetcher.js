@@ -40,8 +40,19 @@ const parseArgs = () => {
 };
 
 const argv = parseArgs();
+const REGIONS = {
+  germany: { west: 5, east: 16, south: 47, north: 56, step: 0.25 },
+  europe: { west: -12, east: 33, south: 33, north: 72, step: 0.5 },
+  world: { west: -180, east: 180, south: -85, north: 85, step: 2 }
+};
+
+const regionName = argv.region ? String(argv.region).toLowerCase() : null;
+const selectedRegion = regionName ? REGIONS[regionName] : null;
+if (regionName && !selectedRegion) {
+  throw new Error(`Unknown region '${argv.region}'. Expected one of: ${Object.keys(REGIONS).join(', ')}`);
+}
 const mode = String(argv.mode || process.env.WIND_MODE || 'regional').toLowerCase();
-const isGlobal = mode === 'global';
+const isGlobal = selectedRegion?.west === -180 || mode === 'global';
 
 const globalBounds = {
   west: clampNumber(argv.west ?? -180, -180),
@@ -57,7 +68,7 @@ const defaultBounds = {
   east: clampNumber(process.env.WIND_LON_MAX, 33.0)
 };
 
-const bounds = isGlobal ? globalBounds : defaultBounds;
+const bounds = selectedRegion ?? (isGlobal ? globalBounds : defaultBounds);
 
 if (bounds.north <= bounds.south) {
   throw new Error('WIND_LAT_MAX must be larger than WIND_LAT_MIN');
@@ -66,14 +77,20 @@ if (bounds.east <= bounds.west) {
   throw new Error('WIND_LON_MAX must be larger than WIND_LON_MIN');
 }
 
-const latStep = clampNumber(
-  argv.latStep ?? argv.latstep ?? process.env.WIND_LAT_STEP,
-  isGlobal ? 2.0 : 2.0
-) || 2.0;
-const lonStep = clampNumber(
-  argv.lonStep ?? argv.lonstep ?? process.env.WIND_LON_STEP,
-  isGlobal ? 2.0 : 2.0
-) || 2.0;
+const latStep = selectedRegion?.step
+  ? selectedRegion.step
+  :
+    clampNumber(
+      argv.latStep ?? argv.latstep ?? process.env.WIND_LAT_STEP,
+      isGlobal ? 2.0 : 2.0
+    ) || 2.0;
+const lonStep = selectedRegion?.step
+  ? selectedRegion.step
+  :
+    clampNumber(
+      argv.lonStep ?? argv.lonstep ?? process.env.WIND_LON_STEP,
+      isGlobal ? 2.0 : 2.0
+    ) || 2.0;
 const refreshMinutes = clampNumber(
   argv.refreshMinutes ?? process.env.WIND_REFRESH_MINUTES,
   isGlobal ? 360 : 180
@@ -88,16 +105,25 @@ const apiForecastDays = clampNumber(process.env.WIND_API_FORECAST_DAYS, 1) || 1;
 const coordinatePrecision = clampNumber(process.env.WIND_COORD_PRECISION, 3) || 3;
 
 const CACHE_MAX_AGE_MS =
-  Math.max(1, clampNumber(argv.ttlHours ?? argv.ttlhours ?? process.env.WIND_CACHE_HOURS, 12)) *
+  Math.max(1, clampNumber(argv.ttlHours ?? argv.ttlhours ?? process.env.WIND_CACHE_HOURS, 6)) *
   60 *
   60 *
   1000;
 
 const OUTPUT_DIR = argv.outDir ?? argv.outputDir ?? DEFAULT_OUTPUT_DIR;
 const OUTPUT_FILE = argv.out ?? path.join(OUTPUT_DIR, isGlobal ? 'global.json' : 'current.json');
-const CURRENT_FILE =
-  argv.alsoWriteCurrent ?? argv.alsoWritecurrent ?? path.join(OUTPUT_DIR, 'current.json');
-const FALLBACK_FILE = path.join(OUTPUT_DIR, 'fallback.json');
+
+const alsoWriteCurrent = argv.alsoWriteCurrent ?? argv.alsoWritecurrent;
+const defaultCurrentPath = path.join(OUTPUT_DIR, 'current.json');
+const CURRENT_FILE = alsoWriteCurrent
+  ? typeof alsoWriteCurrent === 'string'
+    ? alsoWriteCurrent
+    : defaultCurrentPath
+  : selectedRegion
+    ? null
+    : defaultCurrentPath;
+
+const FALLBACK_FILE = selectedRegion ? null : path.join(OUTPUT_DIR, 'fallback.json');
 
 const toFixed = (value) => Number(value.toFixed(coordinatePrecision));
 
@@ -251,6 +277,8 @@ async function buildField() {
   const maxVelocity = magnitude.reduce((acc, value) => (value > acc ? value : acc), 0);
   const avgVelocity = magnitude.reduce((acc, value) => acc + value, 0) / magnitude.length;
 
+  const gridMode = regionName || (isGlobal ? 'global' : 'custom');
+
   const payload = {
     meta: {
       generated: new Date().toISOString(),
@@ -261,7 +289,7 @@ async function buildField() {
       api: apiBase,
       bounds: { ...bounds },
       grid: {
-        mode: isGlobal ? 'global' : 'custom',
+        mode: gridMode,
         latitudeStep: latStep,
         longitudeStep: lonStep,
         nx: longitudes.length,
@@ -280,26 +308,6 @@ async function buildField() {
   };
 
   return payload;
-}
-
-async function readUpdatedAt(filePath) {
-  try {
-    const raw = await fs.promises.readFile(filePath, 'utf8');
-    const json = JSON.parse(raw);
-    const updated = json?.meta?.updatedAt || json?.meta?.generated || json?.generated;
-    const ts = updated ? new Date(updated) : null;
-    if (ts && !Number.isNaN(ts.getTime())) {
-      return ts;
-    }
-  } catch {
-    // ignore
-  }
-  try {
-    const stat = await fs.promises.stat(filePath);
-    return stat.mtime;
-  } catch {
-    return null;
-  }
 }
 
 async function copyIfNeeded(source, target) {
@@ -322,12 +330,16 @@ async function generateWindDataFromApi(outFile) {
 }
 
 async function useCacheIfValid(filePath, ttlMs) {
-  const updatedAt = await readUpdatedAt(filePath);
-  if (!updatedAt) return false;
-  if (Date.now() - updatedAt.getTime() < ttlMs) {
-    console.log('[wind] cache still valid');
-    await copyIfNeeded(filePath, CURRENT_FILE);
-    return true;
+  try {
+    const stat = await fs.promises.stat(filePath);
+    const ageMs = Date.now() - stat.mtime.getTime();
+    if (ageMs < ttlMs) {
+      console.log('[wind] cache valid');
+      await copyIfNeeded(filePath, CURRENT_FILE);
+      return true;
+    }
+  } catch {
+    return false;
   }
   return false;
 }
@@ -381,14 +393,8 @@ async function main() {
       console.error('[wind] Fetch failed:', err);
       if (fs.existsSync(OUTPUT_FILE)) {
         console.log('[wind] Keeping last successful file');
-        await copyIfNeeded(OUTPUT_FILE, CURRENT_FILE);
-      } else if (fs.existsSync(FALLBACK_FILE)) {
-        console.log('[wind] Using fallback (last successful run)');
-        await copyIfNeeded(FALLBACK_FILE, OUTPUT_FILE);
-        await copyIfNeeded(OUTPUT_FILE, CURRENT_FILE);
-      } else {
-        console.error('[wind] Kein Fallback verfügbar – es bleibt der alte Stand erhalten, falls vorhanden.');
       }
+      process.exitCode = 1;
     }
   }
 
