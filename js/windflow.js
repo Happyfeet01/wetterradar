@@ -1,29 +1,16 @@
-// Windströmung-Layer mit auswählbaren Regionen und zoom-abhängigem Downsampling
+// Windströmung-Layer mit auswählbaren Regionen und viewport-basiertem Cropping
 const REGION_SOURCES = {
   germany: {
     label: 'Germany',
-    path: '/wind/current.json',
-    // grobe Bounds für Deutschland
-    bounds: [
-      [47.0, 5.0], // Südwest (lat, lon)
-      [55.5, 15.5] // Nordost
-    ]
+    path: '/data/wind-germany.json'
   },
   europe: {
     label: 'Europe',
-    path: '/wind/current.json',
-    bounds: [
-      [33.0, -12.0], // Südwest, passend zu meta.bounds
-      [72.0, 33.0] // Nordost
-    ]
+    path: '/data/wind-europe.json'
   },
   world: {
     label: 'World',
-    path: '/wind/current.json',
-    bounds: [
-      [-60.0, -180.0],
-      [85.0, 180.0]
-    ]
+    path: '/data/wind-global.json'
   }
 };
 
@@ -76,8 +63,11 @@ export function bindWindFlow(L, map, ui) {
   }
 
   let velocityLayer = null;
-  let rafId = null;
   let currentRegion = regionSelect?.value || 'germany';
+  let lastRawWind = null;
+  let moveHandler = null;
+  let zoomHandler = null;
+  let rafId = null;
   const payloadCache = new Map();
   const loadPromises = new Map();
 
@@ -95,17 +85,16 @@ export function bindWindFlow(L, map, ui) {
     if (checkbox.checked) enableLayer(true);
   });
 
-  map.on('zoomend', () => {
-    if (checkbox.checked && payloadCache.has(currentRegion)) {
-      const payload = payloadCache.get(currentRegion);
-      scheduleUpdate(payload, currentRegion);
-    }
-  });
-
   function disableLayer() {
+    detachMapListeners();
     if (velocityLayer && map.hasLayer(velocityLayer)) {
-      map.removeLayer(velocityLayer);
+      try {
+        map.removeLayer(velocityLayer);
+      } catch (err) {
+        console.warn('Fehler beim Entfernen des Wind-Layers', err);
+      }
     }
+    velocityLayer = null;
   }
 
   async function enableLayer(forceReload = false) {
@@ -118,15 +107,40 @@ export function bindWindFlow(L, map, ui) {
       return;
     }
 
-    scheduleUpdate(data, currentRegion);
-    if (velocityLayer && !map.hasLayer(velocityLayer)) {
-      map.addLayer(velocityLayer);
-    }
+    lastRawWind = data;
+    attachMapListeners();
+    rebuildForViewport();
   }
 
   function updateInfoLabel(text) {
     if (!infoLabel) return;
     infoLabel.textContent = text;
+  }
+
+  function attachMapListeners() {
+    if (moveHandler || zoomHandler) return;
+    const debounced = debounce(() => {
+      if (checkbox.checked) rebuildForViewport();
+    }, 150);
+
+    moveHandler = debounced;
+    zoomHandler = debounced;
+    map.on('moveend', moveHandler);
+    map.on('zoomend', zoomHandler);
+  }
+
+  function detachMapListeners() {
+    if (moveHandler) map.off('moveend', moveHandler);
+    if (zoomHandler) map.off('zoomend', zoomHandler);
+    moveHandler = null;
+    zoomHandler = null;
+  }
+
+  function rebuildForViewport() {
+    if (!lastRawWind) return;
+    const bounds = padBounds(boundsToObj(map.getBounds()));
+    const cropped = cropWindGrib(lastRawWind, bounds);
+    scheduleUpdate(cropped, currentRegion);
   }
 
   function scheduleUpdate(payload, regionKey) {
@@ -147,7 +161,11 @@ export function bindWindFlow(L, map, ui) {
     if (!velocityData) {
       updateInfoLabel(`Wind flow: ${region.label} (keine gültigen Daten)`);
       if (velocityLayer && map.hasLayer(velocityLayer)) {
-        map.removeLayer(velocityLayer);
+        try {
+          map.removeLayer(velocityLayer);
+        } catch (err) {
+          console.warn('Fehler beim Entfernen des Wind-Layers', err);
+        }
       }
       return;
     }
@@ -162,37 +180,17 @@ export function bindWindFlow(L, map, ui) {
     };
 
     try {
-      if (velocityLayer && typeof velocityLayer.setData === 'function') {
-        // vorhandenen Layer aktualisieren
-        velocityLayer.setData(velocityData);
-        if (typeof velocityLayer.setOptions === 'function') {
-          velocityLayer.setOptions({ maxVelocity });
-        }
-      } else {
-        // alten Layer entfernen, falls vorhanden
-        if (velocityLayer && map.hasLayer(velocityLayer)) {
-          map.removeLayer(velocityLayer);
-        }
-        // neuen Layer erstellen
-        velocityLayer = L.velocityLayer(layerOptions);
-        map.addLayer(velocityLayer);
+      if (velocityLayer && map.hasLayer(velocityLayer)) {
+        map.removeLayer(velocityLayer);
       }
+      velocityLayer = L.velocityLayer(layerOptions);
+      map.addLayer(velocityLayer);
+      safeSetOpacity(velocityLayer, VELOCITY_OPTIONS.opacity);
     } catch (err) {
       console.error('Fehler beim Erzeugen/Aktualisieren des Wind-Layers:', err, layerOptions);
       logWind('render-error', String(err));
       updateInfoLabel(`Wind flow: ${region.label} (Render-Fehler, siehe Konsole)`);
       return;
-    }
-
-    // Map-Ausschnitt an die Region anpassen, wenn Bounds gesetzt sind
-    if (region.bounds && Array.isArray(region.bounds) && region.bounds.length === 2) {
-      try {
-        map.fitBounds(region.bounds, { padding: [20, 20] });
-        logWind('fitBounds', regionKey, region.bounds);
-      } catch (e) {
-        console.warn('Konnte Bounds für Region nicht anwenden:', regionKey, e);
-        logWind('fitBounds-error', regionKey, e?.message ?? e);
-      }
     }
 
     const timeText = formatTimeUtc(
@@ -222,6 +220,10 @@ export function bindWindFlow(L, map, ui) {
     const promise = fetch(source.path, { cache: 'no-store' })
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const ct = resp.headers.get('content-type')?.toLowerCase() || '';
+        if (!ct.includes('application/json')) {
+          throw new Error(`Unerwarteter Content-Type: ${ct || 'unbekannt'}`);
+        }
         return resp.json();
       })
       .then((json) => {
@@ -249,7 +251,6 @@ export function bindWindFlow(L, map, ui) {
     loadPromises.set(regionKey, promise);
     return promise;
   }
-
 }
 
 function buildVelocityData(payload, zoom) {
@@ -304,17 +305,123 @@ function formatTimeUtc(isoString) {
   return `${hh}:${mm}`;
 }
 
-function diffs(values) {
-  const arr = [];
-  for (let i = 1; i < values.length; i++) {
-    const diff = Math.abs(values[i] - values[i - 1]);
-    if (Number.isFinite(diff) && diff > 0) arr.push(diff);
+function clamp(value, min, max) {
+  if (Number.isNaN(value)) return min;
+  return Math.min(Math.max(value, min), max);
+}
+
+function debounce(fn, wait = 100) {
+  let timeout = null;
+  return (...args) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => fn(...args), wait);
+  };
+}
+
+function boundsToObj(bounds) {
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  return {
+    west: sw.lng,
+    south: sw.lat,
+    east: ne.lng,
+    north: ne.lat
+  };
+}
+
+function padBounds(bounds, padDeg = 0.5) {
+  return {
+    west: bounds.west - padDeg,
+    south: bounds.south - padDeg,
+    east: bounds.east + padDeg,
+    north: bounds.north + padDeg
+  };
+}
+
+function cropWindGrib(raw, viewBounds) {
+  if (!raw) return null;
+  const source = Array.isArray(raw.data) ? raw.data : raw.field;
+  if (!Array.isArray(source) || !source.length) return raw;
+
+  const cropped = source
+    .map((entry) => cropGribField(entry, viewBounds))
+    .filter(Boolean);
+
+  if (!cropped.length) return null;
+
+  return {
+    ...raw,
+    data: cropped,
+    field: cropped
+  };
+}
+
+function cropGribField(field, viewBounds) {
+  const header = field?.header;
+  const data = field?.data;
+  if (!header || !Array.isArray(data) || header.scanMode !== 0) return field;
+
+  const { lo1, la1, nx, ny, dx, dy } = header;
+  if (![lo1, la1, nx, ny, dx, dy].every((v) => Number.isFinite(v))) return field;
+
+  const lonEnd = lo1 + dx * (nx - 1);
+  const latEnd = la1 - dy * (ny - 1);
+
+  const i0 = clamp(Math.floor((viewBounds.west - lo1) / dx), 0, nx - 1);
+  const i1 = clamp(Math.ceil((viewBounds.east - lo1) / dx), 0, nx - 1);
+  const j0 = clamp(Math.floor((la1 - viewBounds.north) / dy), 0, ny - 1);
+  const j1 = clamp(Math.ceil((la1 - viewBounds.south) / dy), 0, ny - 1);
+
+  if (i1 < i0 || j1 < j0) return null;
+
+  const nxNew = i1 - i0 + 1;
+  const nyNew = j1 - j0 + 1;
+  const newData = [];
+
+  for (let j = j0; j <= j1; j++) {
+    for (let i = i0; i <= i1; i++) {
+      const idx = j * nx + i;
+      newData.push(data[idx]);
+    }
   }
-  return arr.length ? arr : [1];
+
+  const lo1New = lo1 + dx * i0;
+  const la1New = la1 - dy * j0;
+  const lo2 = lo1 + dx * (nx - 1);
+  const la2 = latEnd;
+  const lo2New = lo1New + dx * (nxNew - 1);
+  const la2New = la1New - dy * (nyNew - 1);
+
+  return {
+    header: {
+      ...header,
+      lo1: lo1New,
+      la1: la1New,
+      lo2: clamp(lo2New, lo1, lo2),
+      la2: clamp(la2New, latEnd, la1),
+      nx: nxNew,
+      ny: nyNew
+    },
+    data: newData
+  };
+}
+
+function safeSetOpacity(layer, opacity) {
+  if (!layer || typeof layer.setOpacity !== 'function') return;
+  try {
+    layer.setOpacity(opacity);
+  } catch (err) {
+    console.warn('Konnte Opazität für Wind-Layer nicht setzen', err);
+  }
 }
 
 // Export interne Helfer gebündelt für Tests (kein Public-API-Breaking)
 export const __test = {
   samplePointsForZoom,
-  getSampleStep
+  getSampleStep,
+  clamp,
+  debounce,
+  boundsToObj,
+  padBounds,
+  cropGribField
 };
