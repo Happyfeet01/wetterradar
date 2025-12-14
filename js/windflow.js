@@ -1,25 +1,5 @@
-// Windströmung-Layer mit auswählbaren Regionen und viewport-basiertem Cropping
-const REGION_SOURCES = {
-  germany: {
-    label: 'Germany',
-    path: '/data/wind-germany.json'
-  },
-  europe: {
-    label: 'Europe',
-    path: '/data/wind-europe.json'
-  },
-  world: {
-    label: 'World',
-    path: '/data/wind-global.json'
-  }
-};
-
-// Anteil der Punkte je Zoomstufe (über Modulo stabil und deterministisch)
-const ZOOM_SAMPLING = [
-  { maxZoom: 4, step: 4 }, // 25 %
-  { maxZoom: 6, step: 2 }, // 50 %
-  { maxZoom: Infinity, step: 1 } // 100 %
-];
+// Windströmung-Layer auf Basis eines globalen Caches, Viewport-Cropping und strikt validierter Fetches
+const WIND_ENDPOINTS = ['/wind/global.json', '/wind/current.json'];
 
 // Optionen der Velocity-Layer für ein ruhigeres Partikelfeld
 const VELOCITY_OPTIONS = {
@@ -63,16 +43,14 @@ export function bindWindFlow(L, map, ui) {
   }
 
   let velocityLayer = null;
-  let currentRegion = regionSelect?.value || 'germany';
-  let lastRawWind = null;
+  let rawWind = null;
+  let loadPromise = null;
   let moveHandler = null;
   let zoomHandler = null;
   let rafId = null;
-  const payloadCache = new Map();
-  const loadPromises = new Map();
 
   checkbox.checked = false;
-  updateInfoLabel('Wind flow: Germany');
+  updateInfoLabel('Wind flow: Global');
 
   checkbox.addEventListener('change', () => {
     if (checkbox.checked) enableLayer();
@@ -80,10 +58,21 @@ export function bindWindFlow(L, map, ui) {
   });
 
   regionSelect?.addEventListener('change', () => {
-    currentRegion = regionSelect.value || 'germany';
-    updateInfoLabel(`Wind flow: ${REGION_SOURCES[currentRegion]?.label ?? 'Region'}`);
-    if (checkbox.checked) enableLayer(true);
+    updateInfoLabel('Wind flow: Global');
+    if (checkbox.checked) enableLayer(false, true);
   });
+
+  function updateInfoLabel(text) {
+    if (!infoLabel) return;
+    infoLabel.textContent = text;
+  }
+
+  function detachMapListeners() {
+    if (moveHandler) map.off('moveend', moveHandler);
+    if (zoomHandler) map.off('zoomend', zoomHandler);
+    moveHandler = null;
+    zoomHandler = null;
+  }
 
   function disableLayer() {
     detachMapListeners();
@@ -97,24 +86,23 @@ export function bindWindFlow(L, map, ui) {
     velocityLayer = null;
   }
 
-  async function enableLayer(forceReload = false) {
-    updateInfoLabel(`Wind flow: ${REGION_SOURCES[currentRegion]?.label ?? 'Region'} (lädt…)`);
+  async function enableLayer(forceReload = false, skipFetch = false) {
+    updateInfoLabel('Wind flow: Global (lädt…)');
 
-    const data = await getWindData(currentRegion, forceReload);
-    if (!data) {
+    try {
+      const data = skipFetch && rawWind ? rawWind : await loadWindData(forceReload);
+      if (!data) {
+        throw new Error('Keine Winddaten verfügbar');
+      }
+      rawWind = data;
+      attachMapListeners();
+      rebuildForViewport();
+    } catch (err) {
       checkbox.checked = false;
-      updateInfoLabel(`Wind flow: ${REGION_SOURCES[currentRegion]?.label ?? 'Region'} (nicht verfügbar)`);
-      return;
+      console.error('Winddaten konnten nicht geladen werden:', err);
+      logWind('fetch-error', err?.message ?? err);
+      updateInfoLabel('Wind flow: Global (nicht verfügbar)');
     }
-
-    lastRawWind = data;
-    attachMapListeners();
-    rebuildForViewport();
-  }
-
-  function updateInfoLabel(text) {
-    if (!infoLabel) return;
-    infoLabel.textContent = text;
   }
 
   function attachMapListeners() {
@@ -129,37 +117,28 @@ export function bindWindFlow(L, map, ui) {
     map.on('zoomend', zoomHandler);
   }
 
-  function detachMapListeners() {
-    if (moveHandler) map.off('moveend', moveHandler);
-    if (zoomHandler) map.off('zoomend', zoomHandler);
-    moveHandler = null;
-    zoomHandler = null;
-  }
-
   function rebuildForViewport() {
-    if (!lastRawWind) return;
+    if (!rawWind) return;
     const bounds = padBounds(boundsToObj(map.getBounds()));
-    const cropped = cropWindGrib(lastRawWind, bounds);
-    scheduleUpdate(cropped, currentRegion);
+    const cropped = cropWindGrib(rawWind, bounds);
+    scheduleUpdate(cropped);
   }
 
-  function scheduleUpdate(payload, regionKey) {
+  function scheduleUpdate(payload) {
     if (!payload) return;
     if (rafId) cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(() => {
       rafId = null;
-      applyWindData(payload, regionKey);
+      applyWindData(payload);
     });
   }
 
-  function applyWindData(payload, regionKey) {
-    const region = REGION_SOURCES[regionKey] ?? { label: 'Region' };
-
-    const velocityData = buildVelocityData(payload, map.getZoom());
-    logWind('applyWindData', { regionKey, zoom: map.getZoom(), hasData: !!velocityData });
+  function applyWindData(payload) {
+    const velocityData = buildVelocityData(payload);
+    logWind('applyWindData', { zoom: map.getZoom(), hasData: !!velocityData });
 
     if (!velocityData) {
-      updateInfoLabel(`Wind flow: ${region.label} (keine gültigen Daten)`);
+      updateInfoLabel('Wind flow: Global (keine gültigen Daten)');
       if (velocityLayer && map.hasLayer(velocityLayer)) {
         try {
           map.removeLayer(velocityLayer);
@@ -170,9 +149,7 @@ export function bindWindFlow(L, map, ui) {
       return;
     }
 
-    const maxVelocity =
-      payload?.meta?.stats?.maxVelocity ?? VELOCITY_OPTIONS.maxVelocity;
-
+    const maxVelocity = payload?.meta?.stats?.maxVelocity ?? VELOCITY_OPTIONS.maxVelocity;
     const layerOptions = {
       ...VELOCITY_OPTIONS,
       data: velocityData,
@@ -189,74 +166,84 @@ export function bindWindFlow(L, map, ui) {
     } catch (err) {
       console.error('Fehler beim Erzeugen/Aktualisieren des Wind-Layers:', err, layerOptions);
       logWind('render-error', String(err));
-      updateInfoLabel(`Wind flow: ${region.label} (Render-Fehler, siehe Konsole)`);
+      updateInfoLabel('Wind flow: Global (Render-Fehler, siehe Konsole)');
       return;
     }
 
-    const timeText = formatTimeUtc(
-      payload.meta?.updatedAt ?? payload.generated ?? null
-    );
-
-    updateInfoLabel(
-      `Wind flow: ${region.label}${
-        timeText ? ` (updated ${timeText} UTC)` : ''
-      }`
-    );
+    const timeText = formatTimeUtc(payload.meta?.updatedAt ?? payload.generated ?? null);
+    updateInfoLabel(`Wind flow: Global${timeText ? ` (updated ${timeText} UTC)` : ''}`);
   }
 
-  function getWindData(regionKey, forceReload = false) {
-    if (!forceReload && payloadCache.has(regionKey)) {
-      return Promise.resolve(payloadCache.get(regionKey));
+  function loadWindData(forceReload = false) {
+    if (!forceReload && rawWind) {
+      return Promise.resolve(rawWind);
     }
-    if (!forceReload && loadPromises.has(regionKey)) {
-      return loadPromises.get(regionKey);
-    }
-
-    const source = REGION_SOURCES[regionKey];
-    if (!source?.path) {
-      return Promise.resolve(null);
+    if (!forceReload && loadPromise) {
+      return loadPromise;
     }
 
-    const promise = fetch(source.path, { cache: 'no-store' })
-      .then((resp) => {
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const ct = resp.headers.get('content-type')?.toLowerCase() || '';
-        if (!ct.includes('application/json')) {
-          throw new Error(`Unerwarteter Content-Type: ${ct || 'unbekannt'}`);
-        }
-        return resp.json();
-      })
-      .then((json) => {
-        logWind('wind raw json', json?.meta?.updatedAt ?? json?.generated ?? '');
-        if (!json) return null;
-        const payload = {
-          meta: json.meta ?? {},
-          data: json.data ?? json.field ?? null,
-          field: json.field ?? null,
-          generated: json.meta?.generated ?? json.generated ?? null
-        };
-        logWind('wind payload built', { regionKey, updatedAt: payload.meta?.updatedAt ?? payload.generated });
-        payloadCache.set(regionKey, payload);
+    loadPromise = fetchWithFallback()
+      .then((json) => normalizeWind(json))
+      .then((payload) => {
+        logWind('wind payload built', { updatedAt: payload.meta?.updatedAt ?? payload.generated });
+        rawWind = payload;
         return payload;
       })
       .catch((err) => {
         console.error('Winddaten konnten nicht geladen werden:', err);
-        logWind('fetch-error', regionKey, err?.message ?? err);
-        return null;
+        throw err;
       })
       .finally(() => {
-        loadPromises.delete(regionKey);
+        loadPromise = null;
       });
 
-    loadPromises.set(regionKey, promise);
-    return promise;
+    return loadPromise;
   }
 }
 
-function buildVelocityData(payload, zoom) {
-  if (!payload) return null;
+async function fetchWithFallback() {
+  let lastError = null;
+  for (const url of WIND_ENDPOINTS) {
+    try {
+      const json = await fetchWindJson(url);
+      return json;
+    } catch (err) {
+      lastError = err;
+      console.error(`Winddaten von ${url} fehlgeschlagen:`, err);
+    }
+  }
+  throw lastError ?? new Error('Keine Winddatenquelle erreichbar');
+}
 
-  // Fall A: neue Struktur (current.json) mit data-Array (GRIB-ähnlich)
+async function fetchWindJson(url) {
+  const resp = await fetch(url, { cache: 'no-store' });
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status} für ${url}`);
+  }
+  const ct = resp.headers.get('content-type')?.toLowerCase() || '';
+  if (!ct.includes('application/json')) {
+    throw new Error(`Unerwarteter Content-Type für ${url}: ${ct || 'unbekannt'}`);
+  }
+  return resp.json();
+}
+
+function normalizeWind(json) {
+  if (!json) throw new Error('Leere Windantwort');
+  const dataset = Array.isArray(json.data)
+    ? json.data
+    : Array.isArray(json.field)
+      ? json.field
+      : json.points ?? null;
+  return {
+    meta: json.meta ?? {},
+    data: dataset,
+    field: dataset,
+    generated: json.meta?.generated ?? json.generated ?? null
+  };
+}
+
+function buildVelocityData(payload) {
+  if (!payload) return null;
   if (
     Array.isArray(payload.data) &&
     payload.data.length >= 2 &&
@@ -266,8 +253,6 @@ function buildVelocityData(payload, zoom) {
   ) {
     return payload.data;
   }
-
-  // Fall B: älteres field-Format
   if (
     Array.isArray(payload.field) &&
     payload.field.length &&
@@ -277,8 +262,6 @@ function buildVelocityData(payload, zoom) {
   ) {
     return payload.field;
   }
-
-  // Alles andere ignorieren
   console.warn('buildVelocityData: keine passenden Winddaten erkannt:', payload);
   return null;
 }
@@ -290,9 +273,8 @@ function samplePointsForZoom(points = [], zoom = 0) {
 }
 
 function getSampleStep(zoom) {
-  for (const rule of ZOOM_SAMPLING) {
-    if (zoom <= rule.maxZoom) return Math.max(1, rule.step);
-  }
+  if (zoom <= 4) return 4;
+  if (zoom <= 6) return 2;
   return 1;
 }
 
@@ -423,5 +405,6 @@ export const __test = {
   debounce,
   boundsToObj,
   padBounds,
-  cropGribField
+  cropGribField,
+  cropWindGrib
 };

@@ -13,23 +13,51 @@ const fetchFn = globalThis.fetch
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const OUTPUT_DIR = process.env.WIND_OUTPUT_DIR ?? '/var/www/wetterradar/wind';
-const CURRENT_FILE = path.join(OUTPUT_DIR, 'current.json');
-const FALLBACK_FILE = path.join(OUTPUT_DIR, 'fallback.json');
-const CACHE_MAX_AGE_MS = (process.env.WIND_CACHE_HOURS ? Number(process.env.WIND_CACHE_HOURS) : 12) * 60 * 60 * 1000;
+const DEFAULT_OUTPUT_DIR = process.env.WIND_OUTPUT_DIR ?? '/var/www/wetterradar/wind';
 
 const clampNumber = (value, fallback) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
 };
 
-const bounds = {
-  // Standardmäßig ganz Europa inkl. Skandinavien abdecken
+const parseArgs = () => {
+  const args = {};
+  for (let i = 2; i < process.argv.length; i++) {
+    const token = process.argv[i];
+    if (!token.startsWith('--')) continue;
+    const key = token
+      .replace(/^--/, '')
+      .replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    const next = process.argv[i + 1];
+    if (next && !next.startsWith('--')) {
+      args[key] = next;
+      i += 1;
+    } else {
+      args[key] = true;
+    }
+  }
+  return args;
+};
+
+const argv = parseArgs();
+const mode = String(argv.mode || process.env.WIND_MODE || 'regional').toLowerCase();
+const isGlobal = mode === 'global';
+
+const globalBounds = {
+  west: clampNumber(argv.west ?? -180, -180),
+  east: clampNumber(argv.east ?? 180, 180),
+  north: clampNumber(argv.north ?? 85, 85),
+  south: clampNumber(argv.south ?? -85, -85)
+};
+
+const defaultBounds = {
   north: clampNumber(process.env.WIND_LAT_MAX, 72.0),
   south: clampNumber(process.env.WIND_LAT_MIN, 33.0),
   west: clampNumber(process.env.WIND_LON_MIN, -12.0),
   east: clampNumber(process.env.WIND_LON_MAX, 33.0)
 };
+
+const bounds = isGlobal ? globalBounds : defaultBounds;
 
 if (bounds.north <= bounds.south) {
   throw new Error('WIND_LAT_MAX must be larger than WIND_LAT_MIN');
@@ -38,9 +66,18 @@ if (bounds.east <= bounds.west) {
   throw new Error('WIND_LON_MAX must be larger than WIND_LON_MIN');
 }
 
-const latStep = clampNumber(process.env.WIND_LAT_STEP, 2.0) || 2.0;
-const lonStep = clampNumber(process.env.WIND_LON_STEP, 2.0) || 2.0;
-const refreshMinutes = Math.max(5, clampNumber(process.env.WIND_REFRESH_MINUTES, 180) || 180);
+const latStep = clampNumber(
+  argv.latStep ?? argv.latstep ?? process.env.WIND_LAT_STEP,
+  isGlobal ? 2.0 : 2.0
+) || 2.0;
+const lonStep = clampNumber(
+  argv.lonStep ?? argv.lonstep ?? process.env.WIND_LON_STEP,
+  isGlobal ? 2.0 : 2.0
+) || 2.0;
+const refreshMinutes = clampNumber(
+  argv.refreshMinutes ?? process.env.WIND_REFRESH_MINUTES,
+  isGlobal ? 360 : 180
+) || (isGlobal ? 360 : 180);
 const requestDelayMs = Math.max(0, clampNumber(process.env.WIND_REQUEST_DELAY_MS, 150) || 0);
 
 const apiBase = process.env.WIND_API_URL ?? 'https://api.open-meteo.com/v1/gfs';
@@ -49,6 +86,18 @@ const apiTimezone = process.env.WIND_API_TZ ?? 'UTC';
 const apiForecastDays = clampNumber(process.env.WIND_API_FORECAST_DAYS, 1) || 1;
 
 const coordinatePrecision = clampNumber(process.env.WIND_COORD_PRECISION, 3) || 3;
+
+const CACHE_MAX_AGE_MS =
+  Math.max(1, clampNumber(argv.ttlHours ?? argv.ttlhours ?? process.env.WIND_CACHE_HOURS, 12)) *
+  60 *
+  60 *
+  1000;
+
+const OUTPUT_DIR = argv.outDir ?? argv.outputDir ?? DEFAULT_OUTPUT_DIR;
+const OUTPUT_FILE = argv.out ?? path.join(OUTPUT_DIR, isGlobal ? 'global.json' : 'current.json');
+const CURRENT_FILE =
+  argv.alsoWriteCurrent ?? argv.alsoWritecurrent ?? path.join(OUTPUT_DIR, 'current.json');
+const FALLBACK_FILE = path.join(OUTPUT_DIR, 'fallback.json');
 
 const toFixed = (value) => Number(value.toFixed(coordinatePrecision));
 
@@ -165,8 +214,8 @@ function buildHeaders(datasetTimeIso) {
   ];
 }
 
-async function ensureOutputDir() {
-  await fs.promises.mkdir(OUTPUT_DIR, { recursive: true });
+async function ensureOutputDir(dirPath) {
+  await fs.promises.mkdir(dirPath, { recursive: true });
 }
 
 async function writeJson(filePath, payload) {
@@ -206,11 +255,13 @@ async function buildField() {
     meta: {
       generated: new Date().toISOString(),
       datasetTime: datasetTimeIso,
+      updatedAt: new Date().toISOString(),
       refreshMinutes,
       source: 'Open-Meteo GFS (10 m Wind)',
       api: apiBase,
-      bounds,
+      bounds: { ...bounds },
       grid: {
+        mode: isGlobal ? 'global' : 'custom',
         latitudeStep: latStep,
         longitudeStep: lonStep,
         nx: longitudes.length,
@@ -231,55 +282,59 @@ async function buildField() {
   return payload;
 }
 
-async function generateWindDataFromApi() {
+async function readUpdatedAt(filePath) {
+  try {
+    const raw = await fs.promises.readFile(filePath, 'utf8');
+    const json = JSON.parse(raw);
+    const updated = json?.meta?.updatedAt || json?.meta?.generated || json?.generated;
+    const ts = updated ? new Date(updated) : null;
+    if (ts && !Number.isNaN(ts.getTime())) {
+      return ts;
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const stat = await fs.promises.stat(filePath);
+    return stat.mtime;
+  } catch {
+    return null;
+  }
+}
+
+async function copyIfNeeded(source, target) {
+  if (!target || source === target) return;
+  await fs.promises.copyFile(source, target);
+}
+
+async function generateWindDataFromApi(outFile) {
   console.log(
     `[wind] Aktualisiere Feld (${latitudes.length}×${longitudes.length} Raster, ${totalPoints} Punkte)...`
   );
   const payload = await buildField();
-  payload.meta.updatedAt = new Date().toISOString();
-  await ensureOutputDir();
-  await writeJson(CURRENT_FILE, payload);
+  await ensureOutputDir(path.dirname(outFile));
+  await writeJson(outFile, payload);
+  await copyIfNeeded(outFile, CURRENT_FILE);
+  await copyIfNeeded(outFile, FALLBACK_FILE);
   console.log(
-    `[wind] ${CURRENT_FILE} aktualisiert – Zeitstempel ${payload.meta.datasetTime}, max ${payload.meta.stats.maxVelocity} m/s`
+    `[wind] ${outFile} aktualisiert – Zeitstempel ${payload.meta.datasetTime}, max ${payload.meta.stats.maxVelocity} m/s`
   );
 }
 
-async function main() {
-  let useCache = false;
-
-  try {
-    if (fs.existsSync(CURRENT_FILE)) {
-      const raw = await fs.promises.readFile(CURRENT_FILE, 'utf8');
-      const json = JSON.parse(raw);
-      const updatedAt = json?.meta?.updatedAt ? new Date(json.meta.updatedAt) : null;
-      if (updatedAt && Date.now() - updatedAt.getTime() < CACHE_MAX_AGE_MS) {
-        console.log(`[wind] Cache still valid – using existing data (last successful run: ${json.meta.updatedAt})`);
-        useCache = true;
-      }
-    }
-  } catch (err) {
-    console.warn('[wind] Konnte bestehenden Cache nicht prüfen, hole neue Daten:', err);
+async function useCacheIfValid(filePath, ttlMs) {
+  const updatedAt = await readUpdatedAt(filePath);
+  if (!updatedAt) return false;
+  if (Date.now() - updatedAt.getTime() < ttlMs) {
+    console.log('[wind] cache still valid');
+    await copyIfNeeded(filePath, CURRENT_FILE);
+    return true;
   }
+  return false;
+}
 
-  if (!useCache) {
-    console.log('[wind] Cache expired or missing – start fetch');
-    try {
-      await generateWindDataFromApi();
-      await fs.promises.copyFile(CURRENT_FILE, FALLBACK_FILE);
-      console.log('[wind] Update successful – fallback refreshed');
-    } catch (err) {
-      console.error('[wind] Fetch failed:', err);
-      if (fs.existsSync(FALLBACK_FILE)) {
-        console.log('[wind] Using fallback (last successful run)');
-        await fs.promises.copyFile(FALLBACK_FILE, CURRENT_FILE);
-      } else {
-        console.error('[wind] Kein Fallback verfügbar – es bleibt der alte Stand von current.json (falls vorhanden).');
-      }
-    }
-  }
-
+async function logSanityCheck(filePath) {
   try {
-    const raw = await fs.promises.readFile(CURRENT_FILE, 'utf8');
+    const raw = await fs.promises.readFile(filePath, 'utf8');
     const json = JSON.parse(raw);
     const meta = json.meta ?? {};
     const field = json.data ?? json.field ?? json.points ?? [];
@@ -309,7 +364,38 @@ async function main() {
   }
 }
 
-main().catch(err => {
+async function main() {
+  let useCache = false;
+
+  try {
+    useCache = await useCacheIfValid(OUTPUT_FILE, CACHE_MAX_AGE_MS);
+  } catch (err) {
+    console.warn('[wind] Konnte bestehenden Cache nicht prüfen, hole neue Daten:', err);
+  }
+
+  if (!useCache) {
+    console.log('[wind] Cache expired or missing – start fetch');
+    try {
+      await generateWindDataFromApi(OUTPUT_FILE);
+    } catch (err) {
+      console.error('[wind] Fetch failed:', err);
+      if (fs.existsSync(OUTPUT_FILE)) {
+        console.log('[wind] Keeping last successful file');
+        await copyIfNeeded(OUTPUT_FILE, CURRENT_FILE);
+      } else if (fs.existsSync(FALLBACK_FILE)) {
+        console.log('[wind] Using fallback (last successful run)');
+        await copyIfNeeded(FALLBACK_FILE, OUTPUT_FILE);
+        await copyIfNeeded(OUTPUT_FILE, CURRENT_FILE);
+      } else {
+        console.error('[wind] Kein Fallback verfügbar – es bleibt der alte Stand erhalten, falls vorhanden.');
+      }
+    }
+  }
+
+  await logSanityCheck(OUTPUT_FILE);
+}
+
+main().catch((err) => {
   console.error('[wind] Unbehandelter Fehler:', err);
   process.exitCode = 1;
 });

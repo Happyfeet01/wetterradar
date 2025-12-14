@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Wetterradar Wind Fetcher every 6 hours
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10min
+Unit=wind-fetcher.service
+
+[Install]
+WantedBy=timers.target

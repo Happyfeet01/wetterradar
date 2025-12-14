@@ -1,0 +1,21 @@
+[Unit]
+Description=Wetterradar Wind Fetcher (global cached wind field)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/wetterradar
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /var/www/wetterradar/wind-fetcher.js --mode global --ttl-hours 6 --out /var/www/wetterradar/wind/global.json --also-write-current /var/www/wetterradar/wind/current.json
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/www/wetterradar/wind
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
