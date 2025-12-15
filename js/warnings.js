@@ -9,6 +9,42 @@ const WARNING_LEVEL_COLORS = {
   4: '#800080'
 };
 
+function parseEcAreaColor(value){
+  if (typeof value !== 'string') return null;
+  const parts = value.trim().split(/\s+/).map(Number);
+  if (parts.length !== 3 || parts.some(v => !Number.isFinite(v))) return null;
+  const [r, g, b] = parts.map(v => Math.max(0, Math.min(255, Math.round(v))));
+  return `rgb(${r},${g},${b})`;
+}
+
+function pickTextColor(bgRgbString){
+  if (typeof bgRgbString !== 'string') return '#000';
+  const match = bgRgbString.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+  if (!match) return '#000';
+  const [, rStr, gStr, bStr] = match;
+  const r = Number(rStr);
+  const g = Number(gStr);
+  const b = Number(bStr);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#000' : '#fff';
+}
+
+function fallbackColorBySeverity(sev){
+  const normalized = String(sev || '').toLowerCase();
+  switch(normalized){
+    case 'minor':
+      return 'rgb(255,235,59)';
+    case 'moderate':
+      return 'rgb(255,152,0)';
+    case 'severe':
+      return 'rgb(244,67,54)';
+    case 'extreme':
+      return 'rgb(156,39,176)';
+    default:
+      return null;
+  }
+}
+
 let mapRef = null;
 let leafletRef = null;
 let dwdLayer = null;
@@ -288,7 +324,15 @@ function createCard(warning, onClick){
   const sev = warning.severity || 0;
   const sevColor = WARNING_LEVEL_COLORS[sev] || '#b3b3b3';
   card.className = `warn-card warn-card--sev-${sev}`;
-  card.style.borderLeftColor = sevColor;
+  if (warning.source === 'DWD' && warning.__dwdBg){
+    card.style.background = warning.__dwdBg;
+    if (warning.__dwdFg){
+      card.style.color = warning.__dwdFg;
+    }
+    card.style.borderLeft = '6px solid rgba(0,0,0,.35)';
+  }else{
+    card.style.borderLeftColor = sevColor;
+  }
   card.onclick = onClick;
   const regionId = getNinaRegionId(warning.feature);
   if (regionId){
@@ -357,6 +401,8 @@ function focusNinaCardByAgs(agsRaw){
 function normalizeDwdFeature(feature){
   const props = feature?.properties || {};
   const severity = parseSeverity(props);
+  const dwdColor = parseEcAreaColor(props.EC_AREA_COLOR) || fallbackColorBySeverity(props.SEVERITY);
+  const dwdText = dwdColor ? pickTextColor(dwdColor) : null;
   return {
     feature,
     severity,
@@ -366,7 +412,9 @@ function normalizeDwdFeature(feature){
     timeframe: formatTimeRange(props.ONSET || props.onset, props.EXPIRES || props.expires),
     description: props.DESCRIPTION || '',
     start: props.ONSET || props.onset || '',
-    end: props.EXPIRES || props.expires || ''
+    end: props.EXPIRES || props.expires || '',
+    __dwdBg: dwdColor,
+    __dwdFg: dwdText
   };
 }
 
