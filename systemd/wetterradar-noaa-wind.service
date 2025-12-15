@@ -1,0 +1,15 @@
+[Unit]
+Description=Wetterradar NOAA wind fetcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=www-data
+WorkingDirectory=/var/www/wetterradar
+ExecStart=/usr/bin/node /var/www/wetterradar/tools/noaa-wind-fetcher.js
+ReadWritePaths=/var/lib/wetterradar/noaa-wind /var/www/wetterradar/wind
+ProtectSystem=strict
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
