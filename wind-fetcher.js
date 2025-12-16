@@ -15,6 +15,14 @@ const __dirname = path.dirname(__filename);
 
 const DEFAULT_OUTPUT_DIR = process.env.WIND_OUTPUT_DIR ?? '/var/www/wetterradar/wind';
 
+const EUROPE_DEFAULTS = {
+  west: -25,
+  east: 35,
+  south: 34,
+  north: 71,
+  step: 1.0
+};
+
 const clampNumber = (value, fallback) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -41,18 +49,15 @@ const parseArgs = () => {
 
 const argv = parseArgs();
 const REGIONS = {
-  germany: { west: 5, east: 16, south: 47, north: 56, step: 0.25 },
-  europe: { west: -12, east: 33, south: 33, north: 72, step: 0.5 },
-  world: { west: -180, east: 180, south: -85, north: 85, step: 2 }
+  europe: { ...EUROPE_DEFAULTS }
 };
 
-const regionName = argv.region ? String(argv.region).toLowerCase() : null;
+const regionName = argv.region ? String(argv.region).toLowerCase() : 'europe';
 const selectedRegion = regionName ? REGIONS[regionName] : null;
 if (regionName && !selectedRegion) {
   throw new Error(`Unknown region '${argv.region}'. Expected one of: ${Object.keys(REGIONS).join(', ')}`);
 }
-const mode = String(argv.mode || process.env.WIND_MODE || 'regional').toLowerCase();
-const isGlobal = selectedRegion?.west === -180 || mode === 'global';
+const isGlobal = false;
 
 const globalBounds = {
   west: clampNumber(argv.west ?? -180, -180),
@@ -62,10 +67,10 @@ const globalBounds = {
 };
 
 const defaultBounds = {
-  north: clampNumber(process.env.WIND_LAT_MAX, 72.0),
-  south: clampNumber(process.env.WIND_LAT_MIN, 33.0),
-  west: clampNumber(process.env.WIND_LON_MIN, -12.0),
-  east: clampNumber(process.env.WIND_LON_MAX, 33.0)
+  north: clampNumber(process.env.WIND_LAT_MAX, EUROPE_DEFAULTS.north),
+  south: clampNumber(process.env.WIND_LAT_MIN, EUROPE_DEFAULTS.south),
+  west: clampNumber(process.env.WIND_LON_MIN, EUROPE_DEFAULTS.west),
+  east: clampNumber(process.env.WIND_LON_MAX, EUROPE_DEFAULTS.east)
 };
 
 const bounds = selectedRegion ?? (isGlobal ? globalBounds : defaultBounds);
@@ -82,20 +87,20 @@ const latStep = selectedRegion?.step
   :
     clampNumber(
       argv.latStep ?? argv.latstep ?? process.env.WIND_LAT_STEP,
-      isGlobal ? 2.0 : 2.0
-    ) || 2.0;
+      EUROPE_DEFAULTS.step
+    ) || EUROPE_DEFAULTS.step;
 const lonStep = selectedRegion?.step
   ? selectedRegion.step
   :
     clampNumber(
       argv.lonStep ?? argv.lonstep ?? process.env.WIND_LON_STEP,
-      isGlobal ? 2.0 : 2.0
-    ) || 2.0;
+      EUROPE_DEFAULTS.step
+    ) || EUROPE_DEFAULTS.step;
 const refreshMinutes = clampNumber(
   argv.refreshMinutes ?? process.env.WIND_REFRESH_MINUTES,
   isGlobal ? 360 : 180
 ) || (isGlobal ? 360 : 180);
-const requestDelayMs = Math.max(0, clampNumber(process.env.WIND_REQUEST_DELAY_MS, 150) || 0);
+const requestDelayMs = Math.max(200, clampNumber(process.env.WIND_REQUEST_DELAY_MS, 200) || 0);
 
 const apiBase = process.env.WIND_API_URL ?? 'https://api.open-meteo.com/v1/gfs';
 const hourlyParams = process.env.WIND_API_PARAMS ?? 'wind_speed_10m,wind_direction_10m';
@@ -111,19 +116,10 @@ const CACHE_MAX_AGE_MS =
   1000;
 
 const OUTPUT_DIR = argv.outDir ?? argv.outputDir ?? DEFAULT_OUTPUT_DIR;
-const OUTPUT_FILE = argv.out ?? path.join(OUTPUT_DIR, isGlobal ? 'global.json' : 'current.json');
+const OUTPUT_FILE = argv.out ?? path.join(OUTPUT_DIR, 'current.json');
 
-const alsoWriteCurrent = argv.alsoWriteCurrent ?? argv.alsoWritecurrent;
-const defaultCurrentPath = path.join(OUTPUT_DIR, 'current.json');
-const CURRENT_FILE = alsoWriteCurrent
-  ? typeof alsoWriteCurrent === 'string'
-    ? alsoWriteCurrent
-    : defaultCurrentPath
-  : selectedRegion
-    ? null
-    : defaultCurrentPath;
-
-const FALLBACK_FILE = selectedRegion ? null : path.join(OUTPUT_DIR, 'fallback.json');
+const CURRENT_FILE = path.join(OUTPUT_DIR, 'current.json');
+const FALLBACK_FILE = path.join(OUTPUT_DIR, 'fallback.json');
 
 const toFixed = (value) => Number(value.toFixed(coordinatePrecision));
 
@@ -177,7 +173,7 @@ function toVector(speed, directionDeg) {
   };
 }
 
-const MAX_BATCH_SIZE = 1000;
+const MAX_BATCH_SIZE = 200;
 const batchDelayMs = Math.max(requestDelayMs, 200);
 
 function buildGridPoints() {
@@ -210,17 +206,34 @@ async function fetchBatch(points) {
   url.searchParams.set('wind_speed_unit', 'ms');
 
   const res = await fetchFn(url, { cache: 'no-store' });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Open-Meteo ${res.status} ${res.statusText}: ${text.slice(0, 160)}`);
+  if (res.status === 429) {
+    const err = new Error('Open-Meteo rate limit (429) – aborting to respect limits');
+    err.code = 'RATE_LIMIT';
+    throw err;
   }
 
   const contentType = res.headers.get('content-type') || '';
+  const bodyText = await res.text().catch(() => '');
+
+  if (!res.ok) {
+    throw new Error(`Open-Meteo ${res.status} ${res.statusText}: ${bodyText.slice(0, 160)}`);
+  }
+
   if (!contentType.includes('application/json')) {
     throw new Error(`Unerwarteter Content-Type: ${contentType}`);
   }
 
-  const json = await res.json();
+  const lcBody = bodyText.trim().toLowerCase();
+  if (lcBody.startsWith('<!doctype') || lcBody.startsWith('<html')) {
+    throw new Error('Unerwartete HTML-Antwort vom API');
+  }
+
+  let json;
+  try {
+    json = JSON.parse(bodyText);
+  } catch (err) {
+    throw new Error(`Konnte API-Antwort nicht parsen: ${err?.message ?? err}`);
+  }
   const locations = Array.isArray(json) ? json : [json];
 
   if (locations.length !== points.length) {
@@ -287,6 +300,43 @@ async function writeJson(filePath, payload) {
   const tmpPath = `${filePath}.tmp`;
   await fs.promises.writeFile(tmpPath, JSON.stringify(payload, null, 2));
   await fs.promises.rename(tmpPath, filePath);
+}
+
+function sanityCheckPayload(payload) {
+  try {
+    const components = Array.isArray(payload?.data) ? payload.data : payload?.field;
+    const header = components?.[0]?.header;
+    const nx = Number(header?.nx ?? payload?.meta?.grid?.nx ?? payload?.meta?.nx ?? 0);
+    const ny = Number(header?.ny ?? payload?.meta?.grid?.ny ?? payload?.meta?.ny ?? 0);
+    const expected = nx * ny;
+
+    if (!Array.isArray(components) || !components.length || !expected) {
+      return { ok: false, finiteRatio: 0, nx, ny };
+    }
+
+    let totalValues = 0;
+    let finiteValues = 0;
+    let componentLengthsValid = true;
+
+    for (const comp of components) {
+      if (!Array.isArray(comp?.data)) {
+        componentLengthsValid = false;
+        continue;
+      }
+      const len = comp.data.length;
+      if (len !== expected) {
+        componentLengthsValid = false;
+      }
+      totalValues += len;
+      finiteValues += comp.data.filter((v) => Number.isFinite(v)).length;
+    }
+
+    const finiteRatio = totalValues > 0 ? finiteValues / totalValues : 0;
+    const ok = componentLengthsValid && finiteRatio >= 0.95;
+    return { ok, finiteRatio, nx, ny };
+  } catch (err) {
+    return { ok: false, finiteRatio: 0, nx: 0, ny: 0, err };
+  }
 }
 
 async function buildField() {
@@ -363,12 +413,22 @@ async function generateWindDataFromApi(outFile) {
     `[wind] Aktualisiere Feld (${latitudes.length}×${longitudes.length} Raster, ${totalPoints} Punkte)...`
   );
   const payload = await buildField();
+  const sanity = sanityCheckPayload(payload);
+  if (!sanity.ok) {
+    throw new Error(
+      `Sanity-Check fehlgeschlagen (nx=${sanity.nx}, ny=${sanity.ny}, finite=${Math.round(
+        sanity.finiteRatio * 100
+      )}%)`
+    );
+  }
   await ensureOutputDir(path.dirname(outFile));
   await writeJson(outFile, payload);
   await copyIfNeeded(outFile, CURRENT_FILE);
   await copyIfNeeded(outFile, FALLBACK_FILE);
   console.log(
-    `[wind] ${outFile} aktualisiert – Zeitstempel ${payload.meta.datasetTime}, max ${payload.meta.stats.maxVelocity} m/s`
+    `[wind] ${outFile} aktualisiert – Zeitstempel ${payload.meta.datasetTime}, max ${payload.meta.stats.maxVelocity} m/s (finite ${Math.round(
+      sanity.finiteRatio * 100
+    )}%)`
   );
 }
 
@@ -387,40 +447,36 @@ async function useCacheIfValid(filePath, ttlMs) {
   return false;
 }
 
-async function logSanityCheck(filePath) {
+async function logSanityCheck(filePath, { updateFallback = false } = {}) {
   try {
     const raw = await fs.promises.readFile(filePath, 'utf8');
     const json = JSON.parse(raw);
-    const meta = json.meta ?? {};
-    const field = json.data ?? json.field ?? json.points ?? [];
-    let pointCount = 0;
-
-    if (Array.isArray(field)) {
-      if (Array.isArray(field[0])) {
-        pointCount = field.reduce((sum, row) => sum + (Array.isArray(row) ? row.length : 0), 0);
-      } else if (field[0]?.data && Array.isArray(field[0].data)) {
-        pointCount = field[0].data.length;
-      } else {
-        pointCount = field.length;
+    const sanity = sanityCheckPayload(json);
+    if (sanity.ok) {
+      console.log(
+        `[wind] Sanity-Check OK – nx=${sanity.nx}, ny=${sanity.ny}, finite=${Math.round(
+          sanity.finiteRatio * 100
+        )}%`
+      );
+      if (updateFallback) {
+        await copyIfNeeded(filePath, FALLBACK_FILE);
       }
+      return true;
     }
-
-    const nx = Number(meta.nx ?? meta.cols ?? meta.grid?.nx ?? 0);
-    const ny = Number(meta.ny ?? meta.rows ?? meta.grid?.ny ?? 0);
-    const expected = nx * ny;
-
-    if (expected > 0 && pointCount > 0 && expected === pointCount) {
-      console.log(`[wind] Sanity-Check OK – nx * ny = ${expected}, Feldpunkte = ${pointCount}`);
-    } else {
-      console.warn(`[wind] WARNUNG: Sanity-Check FEHLER – nx * ny = ${expected}, Feldpunkte = ${pointCount}`);
-    }
+    console.warn(
+      `[wind] WARNUNG: Sanity-Check FEHLER – nx=${sanity.nx}, ny=${sanity.ny}, finite=${Math.round(
+        sanity.finiteRatio * 100
+      )}%`
+    );
   } catch (err) {
     console.warn('[wind] Konnte Sanity-Check nicht durchführen:', err);
   }
+  return false;
 }
 
 async function main() {
   let useCache = false;
+  let fetched = false;
 
   try {
     useCache = await useCacheIfValid(OUTPUT_FILE, CACHE_MAX_AGE_MS);
@@ -432,7 +488,13 @@ async function main() {
     console.log('[wind] Cache expired or missing – start fetch');
     try {
       await generateWindDataFromApi(OUTPUT_FILE);
+      fetched = true;
     } catch (err) {
+      if (err?.code === 'RATE_LIMIT') {
+        console.error('[wind] API rate limit erreicht, behalte bestehenden Fallback/Cache.');
+        await logSanityCheck(OUTPUT_FILE);
+        return;
+      }
       console.error('[wind] Fetch failed:', err);
       if (fs.existsSync(OUTPUT_FILE)) {
         console.log('[wind] Keeping last successful file');
@@ -441,7 +503,10 @@ async function main() {
     }
   }
 
-  await logSanityCheck(OUTPUT_FILE);
+  const sanityOk = await logSanityCheck(OUTPUT_FILE, { updateFallback: useCache });
+  if (!sanityOk && fetched) {
+    process.exitCode = process.exitCode || 1;
+  }
 }
 
 main().catch((err) => {

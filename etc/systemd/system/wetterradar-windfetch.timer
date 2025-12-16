@@ -1,10 +1,10 @@
 [Unit]
-Description=Wetterradar Wind Fetcher timer
+Description=Wetterradar Wind Fetcher timer (6h Europe)
 
 [Timer]
-OnCalendar=*-*-* 00,06,12,18:05:00
+OnCalendar=*-*-* 00,06,12,18:10:00
+RandomizedDelaySec=1200
 Persistent=true
-RandomizedDelaySec=10min
 Unit=wetterradar-windfetch.service
 
 [Install]
