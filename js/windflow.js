@@ -1,5 +1,5 @@
-// Windströmung-Layer auf Basis eines globalen Caches, Viewport-Cropping und strikt validierter Fetches
-const WIND_ENDPOINTS = ['/wind/global.json', '/wind/current.json'];
+// Windströmung-Layer auf Basis eines Europa-Feldes, Viewport-Cropping und strikt validierter Fetches
+const WIND_ENDPOINTS = ['/wind/current.json', '/wind/fallback.json'];
 
 // Optionen der Velocity-Layer für ein ruhigeres Partikelfeld
 const VELOCITY_OPTIONS = {
@@ -34,7 +34,6 @@ function logWind(...args) {
 
 export function bindWindFlow(L, map, ui) {
   const checkbox = ui?.chkWindFlow || document.querySelector('#chkWindFlow');
-  const regionSelect = ui?.selWindRegion || document.querySelector('#selWindRegion');
   const infoLabel = ui?.lblWindFlowInfo || document.querySelector('#lblWindFlowInfo');
 
   if (!checkbox) {
@@ -50,16 +49,11 @@ export function bindWindFlow(L, map, ui) {
   let rafId = null;
 
   checkbox.checked = false;
-  updateInfoLabel('Wind flow: Global');
+  updateInfoLabel('Wind flow: Europe');
 
   checkbox.addEventListener('change', () => {
     if (checkbox.checked) enableLayer();
     else disableLayer();
-  });
-
-  regionSelect?.addEventListener('change', () => {
-    updateInfoLabel('Wind flow: Global');
-    if (checkbox.checked) enableLayer(false, true);
   });
 
   function updateInfoLabel(text) {
@@ -87,7 +81,7 @@ export function bindWindFlow(L, map, ui) {
   }
 
   async function enableLayer(forceReload = false, skipFetch = false) {
-    updateInfoLabel('Wind flow: Global (lädt…)');
+    updateInfoLabel('Wind flow: Europe (lädt…)');
 
     try {
       const data = skipFetch && rawWind ? rawWind : await loadWindData(forceReload);
@@ -101,7 +95,7 @@ export function bindWindFlow(L, map, ui) {
       checkbox.checked = false;
       console.error('Winddaten konnten nicht geladen werden:', err);
       logWind('fetch-error', err?.message ?? err);
-      updateInfoLabel('Wind flow: Global (nicht verfügbar)');
+      updateInfoLabel('Wind flow: Europe (nicht verfügbar)');
     }
   }
 
@@ -138,7 +132,7 @@ export function bindWindFlow(L, map, ui) {
     logWind('applyWindData', { zoom: map.getZoom(), hasData: !!velocityData });
 
     if (!velocityData) {
-      updateInfoLabel('Wind flow: Global (keine gültigen Daten)');
+      updateInfoLabel('Wind flow: Europe (keine gültigen Daten)');
       if (velocityLayer && map.hasLayer(velocityLayer)) {
         try {
           map.removeLayer(velocityLayer);
@@ -166,12 +160,12 @@ export function bindWindFlow(L, map, ui) {
     } catch (err) {
       console.error('Fehler beim Erzeugen/Aktualisieren des Wind-Layers:', err, layerOptions);
       logWind('render-error', String(err));
-      updateInfoLabel('Wind flow: Global (Render-Fehler, siehe Konsole)');
+      updateInfoLabel('Wind flow: Europe (Render-Fehler, siehe Konsole)');
       return;
     }
 
     const timeText = formatTimeUtc(payload.meta?.updatedAt ?? payload.generated ?? null);
-    updateInfoLabel(`Wind flow: Global${timeText ? ` (updated ${timeText} UTC)` : ''}`);
+    updateInfoLabel(`Wind flow: Europe${timeText ? ` (updated ${timeText} UTC)` : ''}`);
   }
 
   function loadWindData(forceReload = false) {
@@ -224,7 +218,16 @@ async function fetchWindJson(url) {
   if (!ct.includes('application/json')) {
     throw new Error(`Unerwarteter Content-Type für ${url}: ${ct || 'unbekannt'}`);
   }
-  return resp.json();
+  const text = await resp.text();
+  const trimmed = text.trim().toLowerCase();
+  if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html')) {
+    throw new Error(`Unerwartete HTML-Antwort für ${url}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Ungültige JSON-Antwort für ${url}: ${err?.message ?? err}`);
+  }
 }
 
 function normalizeWind(json) {
