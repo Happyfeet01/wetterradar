@@ -12,12 +12,59 @@ const WARNING_LEVEL_COLORS = {
 const NINA_SIDEBAR_LIMIT = 30;
 const NINA_DETAIL_LIMIT = 20;
 
-function parseEcAreaColor(value){
-  if (typeof value !== 'string') return null;
-  const parts = value.trim().split(/\s+/).map(Number);
+function parseEcAreaColor(s){
+  if (typeof s !== 'string') return null;
+  const parts = s.trim().split(/\s+/).map(Number);
   if (parts.length !== 3 || parts.some(v => !Number.isFinite(v))) return null;
   const [r, g, b] = parts.map(v => Math.max(0, Math.min(255, Math.round(v))));
   return `rgb(${r},${g},${b})`;
+}
+
+function severityToColor(levelOrSeverity){
+  const normalized = String(levelOrSeverity ?? '').toLowerCase();
+  const numeric = Number(normalized);
+  const level = Number.isFinite(numeric) ? numeric : normalized;
+  switch(level){
+    case 1:
+    case '1':
+    case 'minor':
+      return 'rgb(255,235,59)';
+    case 2:
+    case '2':
+    case 'moderate':
+      return 'rgb(255,152,0)';
+    case 3:
+    case '3':
+    case 'severe':
+      return 'rgb(244,67,54)';
+    case 4:
+    case '4':
+    case 'extreme':
+      return 'rgb(156,39,176)';
+    default:
+      return 'rgb(160,160,160)';
+  }
+}
+
+function deriveDwdColor(props){
+  if (!props) return severityToColor();
+  const direct = parseEcAreaColor(props.EC_AREA_COLOR);
+  if (direct) return direct;
+  const candidates = [props.SEVERITY, props.EVENT_LEVEL, props.WARNING_LEVEL, props.LEVEL, props.WARNINGLEVEL];
+  for (const sev of candidates){
+    if (sev !== null && sev !== undefined){
+      return severityToColor(sev);
+    }
+  }
+  return severityToColor();
+}
+
+function pickStrokeColor(bg){
+  if (typeof bg !== 'string') return 'rgba(0,0,0,0.35)';
+  const match = bg.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+  if (!match) return 'rgba(0,0,0,0.35)';
+  const [r, g, b] = match.slice(1).map(Number).map(v => Math.max(0, Math.min(255, Math.round(v * 0.72))));
+  return `rgba(${r},${g},${b},0.9)`;
 }
 
 function pickTextColor(bgRgbString){
@@ -330,19 +377,26 @@ async function ensureNinaLayer(){
   updateNinaSidebar(ninaListItems);
 }
 
+let dwdStyleLogged = false;
+
 function buildDwdLayer(features){
   if (!leafletRef || !Array.isArray(features)) return null;
   return leafletRef.geoJSON(features, {
     pane:'warnPane',
     style: feature => {
-      const sev = parseSeverity(feature?.properties);
-      const color = WARNING_LEVEL_COLORS[sev] || '#b3b3b3';
+      const props = feature?.properties || {};
+      const fill = deriveDwdColor(props);
+      if (!dwdStyleLogged){
+        const keys = Object.keys(props);
+        console.debug('[dwd] style', { keys, fillColor: fill });
+        dwdStyleLogged = true;
+      }
       return {
-        color,
-        weight: 1.2,
-        opacity: 0.9,
-        fillOpacity: 0.45,
-        fillColor: color
+        fillColor: fill,
+        color: pickStrokeColor(fill),
+        weight: 1,
+        opacity: 0.8,
+        fillOpacity: 0.45
       };
     },
     onEachFeature: (feature, layer)=>{
