@@ -215,12 +215,14 @@ async function fetchWindJson(url) {
     throw new Error(`HTTP ${resp.status} für ${url}`);
   }
   const ct = resp.headers.get('content-type')?.toLowerCase() || '';
-  if (!ct.includes('application/json')) {
-    throw new Error(`Unerwarteter Content-Type für ${url}: ${ct || 'unbekannt'}`);
-  }
   const text = await resp.text();
-  const trimmed = text.trim().toLowerCase();
-  if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html')) {
+  if (!ct.includes('application/json')) {
+    const snippet = text.slice(0, 120);
+    throw new Error(`Unerwarteter Content-Type für ${url}: ${ct || 'unbekannt'} (body: ${snippet})`);
+  }
+  const trimmed = text.trim();
+  if (trimmed.startsWith('<')) {
+    console.error(`Unerwartete HTML-Antwort für ${url}:`, trimmed.slice(0, 120));
     throw new Error(`Unerwartete HTML-Antwort für ${url}`);
   }
   try {
@@ -232,38 +234,36 @@ async function fetchWindJson(url) {
 
 function normalizeWind(json) {
   if (!json) throw new Error('Leere Windantwort');
-  const dataset = Array.isArray(json.data)
-    ? json.data
-    : Array.isArray(json.field)
-      ? json.field
-      : json.points ?? null;
-  return {
-    meta: json.meta ?? {},
-    data: dataset,
-    field: dataset,
-    generated: json.meta?.generated ?? json.generated ?? null
+  const records = getWindRecords(json);
+  const meta = normalizeWindMeta(json.meta ?? {}, records);
+  const normalized = {
+    ...json,
+    meta
   };
+
+  if (records) {
+    normalized.data = records;
+    normalized.field = records;
+  }
+
+  if (!normalized.generated && json.generated) {
+    normalized.generated = json.generated;
+  }
+
+  return normalized;
 }
 
 function buildVelocityData(payload) {
   if (!payload) return null;
+  const records = getWindRecords(payload);
   if (
-    Array.isArray(payload.data) &&
-    payload.data.length >= 2 &&
-    payload.data[0] &&
-    payload.data[0].header &&
-    Array.isArray(payload.data[0].data)
+    Array.isArray(records) &&
+    records.length >= 2 &&
+    records[0] &&
+    records[0].header &&
+    Array.isArray(records[0].data)
   ) {
-    return payload.data;
-  }
-  if (
-    Array.isArray(payload.field) &&
-    payload.field.length &&
-    payload.field[0] &&
-    payload.field[0].header &&
-    Array.isArray(payload.field[0].data)
-  ) {
-    return payload.field;
+    return records;
   }
   console.warn('buildVelocityData: keine passenden Winddaten erkannt:', payload);
   return null;
@@ -325,7 +325,7 @@ function padBounds(bounds, padDeg = 0.5) {
 
 function cropWindGrib(raw, viewBounds) {
   if (!raw) return null;
-  const source = Array.isArray(raw.data) ? raw.data : raw.field;
+  const source = getWindRecords(raw);
   if (!Array.isArray(source) || !source.length) return raw;
 
   const cropped = source
@@ -339,6 +339,48 @@ function cropWindGrib(raw, viewBounds) {
     data: cropped,
     field: cropped
   };
+}
+
+function getWindRecords(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw.data)) return raw.data;
+  if (Array.isArray(raw.field)) return raw.field;
+  return null;
+}
+
+function normalizeWindMeta(meta, records) {
+  const normalized = { ...meta };
+  const bounds = meta?.bounds;
+  if (Array.isArray(bounds) && bounds.length === 4) {
+    normalized.bounds = {
+      west: bounds[0],
+      south: bounds[1],
+      east: bounds[2],
+      north: bounds[3]
+    };
+  } else if (bounds && typeof bounds === 'object') {
+    normalized.bounds = bounds;
+  }
+
+  if (!normalized.grid) {
+    const header = records?.[0]?.header;
+    const { nx, ny, dx, dy, lo1, la1, lo2, la2, scanMode } = header || {};
+    if ([nx, ny, dx, dy, lo1, la1].every((v) => Number.isFinite(v))) {
+      normalized.grid = {
+        nx,
+        ny,
+        dx,
+        dy,
+        lo1,
+        la1,
+        lo2: Number.isFinite(lo2) ? lo2 : lo1 + dx * (nx - 1),
+        la2: Number.isFinite(la2) ? la2 : la1 - dy * (ny - 1),
+        scanMode
+      };
+    }
+  }
+
+  return normalized;
 }
 
 function cropGribField(field, viewBounds) {
