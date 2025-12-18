@@ -230,6 +230,10 @@ function toVector(speed, directionDeg) {
   };
 }
 
+function isEmptyApiResponseError(err) {
+  return err?.message?.includes('Leere API-Antwort erhalten') || err?.status === 204;
+}
+
 async function ensureOutputDir(dirPath) {
   await fs.promises.mkdir(dirPath, { recursive: true });
 }
@@ -385,6 +389,10 @@ async function fetchFromApi() {
       console.warn('[wind] API rate limit (429) – behalte letzte erfolgreiche Datei.');
       return { rateLimited: true };
     }
+    if (isEmptyApiResponseError(err)) {
+      console.warn('[wind] API lieferte eine leere Antwort – behalte letzte erfolgreiche Datei.');
+      return { emptyResponse: true };
+    }
     throw err;
   }
 }
@@ -405,7 +413,7 @@ async function main() {
 
   try {
     const result = await fetchFromApi();
-    if (result.rateLimited) {
+    if (result.rateLimited || result.emptyResponse) {
       return;
     }
     const payload = buildPayload(result.data);
