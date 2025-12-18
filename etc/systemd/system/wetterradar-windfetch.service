@@ -7,7 +7,9 @@ After=network-online.target
 Type=oneshot
 User=www-data
 WorkingDirectory=/var/www/wetterradar
-ExecStart=/usr/bin/node /var/www/wetterradar/wind-fetcher.js --region europe --out /var/www/wetterradar/wind/current.json --ttl-hours 6
+ExecStart=/usr/bin/node /var/www/wetterradar/wind-fetcher.js
+ExecStartPost=/bin/cp -f /var/www/wetterradar/wind/current.json /var/www/wetterradar/wind/fallback.json
+ExecStartPost=/bin/chmod 664 /var/www/wetterradar/wind/current.json /var/www/wetterradar/wind/fallback.json
 
 [Install]
 WantedBy=multi-user.target
