@@ -61,20 +61,6 @@ function normalizeAxis(values, label) {
   return numeric;
 }
 
-function reorderGrid(flatValues, nx, ny, latAscending, lonAscending) {
-  const ordered = new Array(flatValues.length);
-  for (let y = 0; y < ny; y++) {
-    const srcY = latAscending ? ny - 1 - y : y;
-    for (let x = 0; x < nx; x++) {
-      const srcX = lonAscending ? x : nx - 1 - x;
-      const srcIdx = srcY * nx + srcX;
-      const destIdx = y * nx + x;
-      ordered[destIdx] = flatValues[srcIdx];
-    }
-  }
-  return ordered;
-}
-
 function flattenGrid(values, nx, ny, label) {
   if (!Array.isArray(values)) {
     throw new Error(`Antwort enthält keine Daten für ${label}`);
@@ -104,6 +90,16 @@ function flattenGrid(values, nx, ny, label) {
     );
   }
   return flat;
+}
+
+function gridToMatrix(values, nx, ny, label) {
+  const flat = flattenGrid(values, nx, ny, label);
+  const matrix = [];
+  for (let row = 0; row < ny; row++) {
+    const start = row * nx;
+    matrix.push(flat.slice(start, start + nx));
+  }
+  return matrix;
 }
 
 function pickLayer(series, timeCount, label) {
@@ -171,6 +167,7 @@ function buildPayload(apiData) {
   const longitudes = normalizeAxis(apiData.longitude, 'Längen');
   const nx = longitudes.length;
   const ny = latitudes.length;
+  const total = nx * ny;
 
   const hourly = apiData.hourly ?? {};
   const times = hourly.time;
@@ -185,42 +182,73 @@ function buildPayload(apiData) {
   const speedLayer = pickLayer(hourly.wind_speed_10m, times.length, 'wind_speed_10m');
   const dirLayer = pickLayer(hourly.wind_direction_10m, times.length, 'wind_direction_10m');
 
-  const flatSpeeds = flattenGrid(speedLayer, nx, ny, 'wind_speed_10m');
-  const flatDirs = flattenGrid(dirLayer, nx, ny, 'wind_direction_10m');
+  const speedMatrix = gridToMatrix(speedLayer, nx, ny, 'wind_speed_10m');
+  const dirMatrix = gridToMatrix(dirLayer, nx, ny, 'wind_direction_10m');
 
   const latAscending = latitudes[0] < latitudes[latitudes.length - 1];
   const lonAscending = longitudes[0] < longitudes[longitudes.length - 1];
 
-  const speeds = reorderGrid(flatSpeeds, nx, ny, latAscending, lonAscending);
-  const directions = reorderGrid(flatDirs, nx, ny, latAscending, lonAscending);
+  const dx = computeStep(longitudes);
+  const dy = computeStep(latitudes);
+  const lo1 = BOUNDS.west;
+  const la1 = BOUNDS.north;
+  const lo2 = lo1 + (nx - 1) * dx;
+  const la2 = la1 - (ny - 1) * dy;
 
-  const total = nx * ny;
-  validateFinite(speeds, 'Windgeschwindigkeit', total);
-  validateFinite(directions, 'Windrichtung', total);
+  const uData = new Array(total).fill(null);
+  const vData = new Array(total).fill(null);
+  const points = [];
 
-  const uData = new Array(total);
-  const vData = new Array(total);
-  for (let i = 0; i < total; i++) {
-    const { u, v } = toVector(speeds[i], directions[i]);
-    uData[i] = u;
-    vData[i] = v;
+  for (let j = 0; j < ny; j++) {
+    const lat = la1 - j * dy;
+    const srcRow = latAscending ? ny - 1 - j : j;
+    for (let i = 0; i < nx; i++) {
+      const lon = lo1 + i * dx;
+      const srcCol = lonAscending ? i : nx - 1 - i;
+      const idx = j * nx + i;
+      points.push({ idx, lat, lon, srcRow, srcCol });
+    }
   }
 
+  for (const point of points) {
+    const speed = speedMatrix[point.srcRow]?.[point.srcCol];
+    const direction = dirMatrix[point.srcRow]?.[point.srcCol];
+    const { u, v } = toVector(speed, direction);
+    uData[point.idx] = u;
+    vData[point.idx] = v;
+  }
+
+  if (uData.length !== total || vData.length !== total) {
+    throw new Error('Gitterlänge stimmt nicht mit erwarteter Punktzahl überein');
+  }
   validateFinite(uData, 'u-Komponenten', total);
   validateFinite(vData, 'v-Komponenten', total);
 
-  const dx = computeStep(longitudes);
-  const dy = computeStep(latitudes);
   const generated = new Date().toISOString();
+  const cornerDebug = [
+    { idx: 0, lon: lo1, lat: la1 },
+    { idx: nx - 1, lon: lo2, lat: la1 },
+    { idx: (ny - 1) * nx, lon: lo1, lat: la2 },
+    { idx: total - 1, lon: lo2, lat: la2 }
+  ];
+  console.debug(
+    '[wind] Grid sanity check',
+    JSON.stringify({
+      expectedLength: total,
+      uLength: uData.length,
+      vLength: vData.length,
+      corners: cornerDebug
+    })
+  );
 
   const headerBase = {
     parameterCategory: 2,
     parameterUnit: 'm.s-1',
     refTime: datasetTimeIso,
-    lo1: BOUNDS.west,
-    la1: BOUNDS.north,
-    lo2: BOUNDS.east,
-    la2: BOUNDS.south,
+    lo1,
+    la1,
+    lo2,
+    la2,
     nx,
     ny,
     dx,
@@ -230,7 +258,7 @@ function buildPayload(apiData) {
 
   return {
     meta: {
-      bounds: [BOUNDS.west, BOUNDS.south, BOUNDS.east, BOUNDS.north],
+      bounds: [lo1, la2, lo2, la1],
       nx,
       ny,
       dx,
