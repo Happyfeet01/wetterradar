@@ -50,7 +50,8 @@ const TTL_HOURS = (() => {
   return Number.isFinite(value) && value > 0 ? value : null;
 })();
 
-const HOURLY_PARAMS = 'time,wind_speed_10m,wind_direction_10m';
+// Open-Meteo: "time" wird in hourly.time immer automatisch geliefert und darf NICHT in hourly= stehen.
+const HOURLY_PARAMS = 'wind_speed_10m,wind_direction_10m';
 const MIN_TIMEOUT_MS = 90_000;
 const MAX_BATCH_SIZE = 50;
 
@@ -330,14 +331,13 @@ async function fetchBatch(batchPoints) {
   const speeds = hourly.wind_speed_10m;
   const directions = hourly.wind_direction_10m;
 
+  // Bei Multi-Location kann wind_speed_10m / wind_direction_10m 2D sein (Array< Array<number> >),
+  // daher NICHT gegen times.length vergleichen. Wir prüfen nur die Mindeststruktur.
   const isInvalidResponse =
     !hourly ||
-    !Array.isArray(times) ||
-    times.length === 0 ||
-    !Array.isArray(speeds) ||
-    !Array.isArray(directions) ||
-    speeds.length !== times.length ||
-    directions.length !== times.length;
+    !Array.isArray(times) || times.length === 0 ||
+    !Array.isArray(speeds) || speeds.length === 0 ||
+    !Array.isArray(directions) || directions.length === 0;
 
   if (isInvalidResponse) {
     await writeInvalidResponseDebug({
@@ -357,18 +357,16 @@ async function fetchBatch(batchPoints) {
   }
 
   const locationCount = batchPoints.length;
-  const speedSeries = extractLocationLayer(
-    hourly.wind_speed_10m,
-    times.length,
-    locationCount,
-    'wind_speed_10m'
-  );
-  const dirSeries = extractLocationLayer(
-    hourly.wind_direction_10m,
-    times.length,
-    locationCount,
-    'wind_direction_10m'
-  );
+
+  let speedSeries, dirSeries;
+  try {
+    speedSeries = extractLocationLayer(hourly.wind_speed_10m, times.length, locationCount, 'wind_speed_10m');
+    dirSeries = extractLocationLayer(hourly.wind_direction_10m, times.length, locationCount, 'wind_direction_10m');
+  } catch (e) {
+    // Falls Struktur doch anders ist: Debug schreiben, damit wir echte Payload sehen.
+    await writeInvalidResponseDebug({ url: url.toString(), status, contentType, json: data });
+    throw e;
+  }
 
   const speedUnit = data.hourly_units?.wind_speed_10m;
   const vectors = batchPoints.map((point, idx) => {
