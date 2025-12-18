@@ -50,7 +50,7 @@ const TTL_HOURS = (() => {
   return Number.isFinite(value) && value > 0 ? value : null;
 })();
 
-const HOURLY_PARAMS = 'wind_speed_10m,wind_direction_10m';
+const HOURLY_PARAMS = 'time,wind_speed_10m,wind_direction_10m';
 const MIN_TIMEOUT_MS = 90_000;
 const MAX_BATCH_SIZE = 50;
 
@@ -108,7 +108,8 @@ async function fetchJson(url, opts = {}) {
     }
 
     try {
-      return JSON.parse(body);
+      const parsed = JSON.parse(body);
+      return { json: parsed, status: res.status, contentType };
     } catch (err) {
       const isTruncated = err?.message?.includes('Unexpected end of JSON input');
       if (isTruncated && i < attempts - 1) {
@@ -274,6 +275,26 @@ function convertSpeedUnits(value, unit) {
   return value;
 }
 
+async function writeInvalidResponseDebug({ url, status, contentType, json }) {
+  const jsonPreview = (() => {
+    try {
+      return JSON.stringify(json).slice(0, 2000);
+    } catch {
+      return '[unserializable JSON]';
+    }
+  })();
+
+  const debugPayload = { url, status, contentType, jsonPreview };
+  try {
+    await fs.promises.writeFile(
+      '/tmp/wind-openmeteo-invalid.json',
+      JSON.stringify(debugPayload, null, 2)
+    );
+  } catch {
+    // ignore debug write errors
+  }
+}
+
 function validateFinite(values, label, expectedLength) {
   if (values.length !== expectedLength) {
     throw new Error(
@@ -302,11 +323,32 @@ async function fetchBatch(batchPoints) {
   url.searchParams.set('timezone', 'GMT');
   url.searchParams.set('wind_speed_unit', 'ms');
 
-  const data = await fetchJson(url.toString(), { cache: 'no-store' });
+  const response = await fetchJson(url.toString(), { cache: 'no-store' });
+  const { json: data, status, contentType } = response;
   const hourly = data.hourly ?? {};
   const times = hourly.time;
-  if (!Array.isArray(times) || times.length === 0) {
-    throw new Error('Antwort enthält keine Stundenzeiten');
+  const speeds = hourly.wind_speed_10m;
+  const directions = hourly.wind_direction_10m;
+
+  const isInvalidResponse =
+    !hourly ||
+    !Array.isArray(times) ||
+    times.length === 0 ||
+    !Array.isArray(speeds) ||
+    !Array.isArray(directions) ||
+    speeds.length !== times.length ||
+    directions.length !== times.length;
+
+  if (isInvalidResponse) {
+    await writeInvalidResponseDebug({
+      url: url.toString(),
+      status,
+      contentType,
+      json: data
+    });
+    const error = new Error('Antwort enthält keine Stundenzeiten');
+    error.status = status;
+    throw error;
   }
 
   const datasetTimeIso = toIsoString(times[0]);
