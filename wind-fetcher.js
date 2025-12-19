@@ -276,20 +276,9 @@ async function fetchBatch(batchPoints) {
   const { json: data, status, contentType, bodyPreview } = await fetchJsonTextFirst(
     url.toString()
   );
-  const hourly = data.hourly ?? {};
-  const times = hourly.time;
-  const speeds = hourly.wind_speed_10m;
-  const directions = hourly.wind_direction_10m;
+  const isArrayResponse = Array.isArray(data);
 
-  // Bei Multi-Location kann wind_speed_10m / wind_direction_10m 2D sein (Array< Array<number> >),
-  // daher NICHT gegen times.length vergleichen. Wir prüfen nur die Mindeststruktur.
-  const isInvalidResponse =
-    !hourly ||
-    !Array.isArray(times) || times.length === 0 ||
-    !Array.isArray(speeds) || speeds.length === 0 ||
-    !Array.isArray(directions) || directions.length === 0;
-
-  if (isInvalidResponse) {
+  const writeDebugInvalid = async () => {
     try {
       await fs.promises.writeFile(
         '/tmp/wind-openmeteo-invalid.json',
@@ -298,8 +287,9 @@ async function fetchBatch(batchPoints) {
             url: url.toString(),
             status,
             contentType,
-            keys: Object.keys(data || {}),
             bodyPreview,
+            isArrayResponse,
+            dataLength: Array.isArray(data) ? data.length : undefined,
             data
           },
           null,
@@ -308,29 +298,97 @@ async function fetchBatch(batchPoints) {
         'utf8'
       );
     } catch {}
-    const error = new Error('Antwort enthält keine Stundenzeiten');
-    error.status = status;
-    throw error;
+  };
+
+  let datasetTimeIso;
+  let speedSeries;
+  let dirSeries;
+  let speedUnit;
+
+  if (isArrayResponse) {
+    if (!data.length) {
+      await writeDebugInvalid();
+      const error = new Error('Antwort enthält keine Stundenzeiten');
+      error.status = status;
+      throw error;
+    }
+
+    const firstHourly = data[0]?.hourly ?? {};
+    const times = firstHourly.time;
+
+    if (!Array.isArray(times) || times.length === 0) {
+      await writeDebugInvalid();
+      const error = new Error('Antwort enthält keine Stundenzeiten');
+      error.status = status;
+      throw error;
+    }
+
+    datasetTimeIso = toIsoString(times[0]);
+    if (!datasetTimeIso) {
+      throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
+    }
+
+    const toKey = (lat, lon) => `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
+    const byKey = new Map();
+    for (const loc of data) {
+      const key = toKey(loc?.latitude, loc?.longitude);
+      byKey.set(key, loc);
+    }
+
+    speedSeries = [];
+    dirSeries = [];
+    for (const point of batchPoints) {
+      const key = toKey(point.lat, point.lon);
+      const loc = byKey.get(key);
+      if (!loc) {
+        await writeDebugInvalid();
+        throw new Error(`Antwort enthält nicht alle angefragten Punkte (fehlend: ${key})`);
+      }
+
+      speedSeries.push(loc?.hourly?.wind_speed_10m?.[0]);
+      dirSeries.push(loc?.hourly?.wind_direction_10m?.[0]);
+      speedUnit = speedUnit ?? loc?.hourly_units?.wind_speed_10m;
+    }
+  } else {
+    const hourly = data.hourly ?? {};
+    const times = hourly.time;
+    const speeds = hourly.wind_speed_10m;
+    const directions = hourly.wind_direction_10m;
+
+    // Bei Multi-Location kann wind_speed_10m / wind_direction_10m 2D sein (Array< Array<number> >),
+    // daher NICHT gegen times.length vergleichen. Wir prüfen nur die Mindeststruktur.
+    const isInvalidResponse =
+      !hourly ||
+      !Array.isArray(times) || times.length === 0 ||
+      !Array.isArray(speeds) || speeds.length === 0 ||
+      !Array.isArray(directions) || directions.length === 0;
+
+    if (isInvalidResponse) {
+      await writeDebugInvalid();
+      const error = new Error('Antwort enthält keine Stundenzeiten');
+      error.status = status;
+      throw error;
+    }
+
+    datasetTimeIso = toIsoString(times[0]);
+    if (!datasetTimeIso) {
+      throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
+    }
+
+    const locationCount = batchPoints.length;
+
+    try {
+      speedSeries = extractLocationLayer(hourly.wind_speed_10m, times.length, locationCount, 'wind_speed_10m');
+      dirSeries = extractLocationLayer(hourly.wind_direction_10m, times.length, locationCount, 'wind_direction_10m');
+    } catch (e) {
+      // Falls Struktur doch anders ist: Debug schreiben, damit wir echte Payload sehen.
+      await writeInvalidResponseDebug({ url: url.toString(), status, contentType, json: data });
+      throw e;
+    }
+
+    speedUnit = data.hourly_units?.wind_speed_10m;
   }
 
-  const datasetTimeIso = toIsoString(times[0]);
-  if (!datasetTimeIso) {
-    throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
-  }
-
-  const locationCount = batchPoints.length;
-
-  let speedSeries, dirSeries;
-  try {
-    speedSeries = extractLocationLayer(hourly.wind_speed_10m, times.length, locationCount, 'wind_speed_10m');
-    dirSeries = extractLocationLayer(hourly.wind_direction_10m, times.length, locationCount, 'wind_direction_10m');
-  } catch (e) {
-    // Falls Struktur doch anders ist: Debug schreiben, damit wir echte Payload sehen.
-    await writeInvalidResponseDebug({ url: url.toString(), status, contentType, json: data });
-    throw e;
-  }
-
-  const speedUnit = data.hourly_units?.wind_speed_10m;
   const vectors = batchPoints.map((point, idx) => {
     const speedValue = convertSpeedUnits(Number(speedSeries[idx]), speedUnit);
     const directionValue = Number(dirSeries[idx]);
