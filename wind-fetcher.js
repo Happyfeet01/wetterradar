@@ -55,93 +55,42 @@ const HOURLY_PARAMS = 'wind_speed_10m,wind_direction_10m';
 const MIN_TIMEOUT_MS = 90_000;
 const MAX_BATCH_SIZE = 50;
 
-async function fetchJson(url, opts = {}) {
-  const attempts = 3;
-  const backoff = [500, 1500];
+async function fetchJsonTextFirst(url) {
+  const res = await fetchFn(url, { cache: 'no-store' });
 
-  for (let i = 0; i < attempts; i++) {
-    if (i > 0) {
-      await new Promise((resolve) => setTimeout(resolve, backoff[i - 1]));
-    }
+  const status = res.status;
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
 
-    let res;
-    let body = '';
-    let contentType = '';
-    const controller = new AbortController();
-    const timeoutMs = Math.max(MIN_TIMEOUT_MS, Number(opts.timeoutMs) || 0);
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      res = await fetchFn(url, { ...opts, signal: controller.signal });
-      body = await res.text();
-      contentType = res.headers.get('content-type') || '';
-    } catch (err) {
-      clearTimeout(timer);
-      if (err?.name === 'AbortError') {
-        throw new Error(`Fetch timeout nach ${timeoutMs}ms`);
-      }
-      throw err;
-    }
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      const preview = body.slice(0, 200).replace(/\s+/g, ' ');
-      const error = new Error(
-        `Open-Meteo Fehler ${res.status} ${res.statusText}: ${preview}`
-      );
-      error.status = res.status;
-      throw error;
-    }
-
-    if (!contentType.includes('application/json')) {
-      const preview = body.slice(0, 200).replace(/\s+/g, ' ');
-      const error = new Error(
-        `Unerwarteter Content-Type: ${contentType || 'unbekannt'} – Body-Ausschnitt: ${preview}`
-      );
-      error.status = res.status;
-      throw error;
-    }
-
-    if (!body || body.length === 0) {
-      const error = new Error('Leere API-Antwort erhalten');
-      error.status = res.status;
-      throw error;
-    }
-
-    try {
-      const parsed = JSON.parse(body);
-      return { json: parsed, status: res.status, contentType };
-    } catch (err) {
-      const isTruncated = err?.message?.includes('Unexpected end of JSON input');
-      if (isTruncated && i < attempts - 1) {
-        continue;
-      }
-
-      if (isTruncated) {
-        const debugPayload = [
-          `timestamp: ${new Date().toISOString()}`,
-          `url: ${url}`,
-          `status: ${res.status}`,
-          `content-type: ${contentType || 'unbekannt'}`,
-          `body-length: ${body.length}`,
-          'body-preview:',
-          body.slice(0, 1000)
-        ].join('\n');
-
-        try {
-          await fs.promises.writeFile('/tmp/wind-openmeteo-debug.txt', debugPayload);
-        } catch {
-          // ignore debug write errors
-        }
-      }
-
-      const parseError = new Error(`Konnte API-Antwort nicht parsen: ${err?.message ?? err}`);
-      parseError.status = res.status;
-      throw parseError;
-    }
+  const text = await res.text(); // wichtig: erst Text lesen
+  if (!res.ok) {
+    throw new Error(`Open-Meteo ${status}: ${text.slice(0, 300)}`);
+  }
+  if (!text || text.trim().length < 2) {
+    throw new Error('API lieferte eine leere Antwort');
   }
 
-  throw new Error('Unbekannter Fehler beim Abrufen der API');
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    // Debug dump
+    try {
+      await fs.promises.writeFile(
+        '/tmp/wind-openmeteo-invalid.json',
+        JSON.stringify({ url: String(url), status, contentType: ct, bodyPreview: text.slice(0, 800) }, null, 2),
+        'utf8'
+      );
+    } catch {}
+    throw new Error(`Konnte API-Antwort nicht parsen: ${e.message}`);
+  }
+
+  // Open-Meteo Fehlerpayload sauber melden
+  if (json?.error === true || typeof json?.reason === 'string') {
+    const reason = json?.reason || 'Unbekannter Open-Meteo Fehler';
+    throw new Error(`Open-Meteo Fehler ${status} (${url}): ${reason}`);
+  }
+
+  return { json, status, contentType: ct, bodyPreview: text.slice(0, 500) };
 }
 
 function toIsoString(value) {
@@ -324,8 +273,9 @@ async function fetchBatch(batchPoints) {
   url.searchParams.set('timezone', 'GMT');
   url.searchParams.set('wind_speed_unit', 'ms');
 
-  const response = await fetchJson(url.toString(), { cache: 'no-store' });
-  const { json: data, status, contentType } = response;
+  const { json: data, status, contentType, bodyPreview } = await fetchJsonTextFirst(
+    url.toString()
+  );
   const hourly = data.hourly ?? {};
   const times = hourly.time;
   const speeds = hourly.wind_speed_10m;
@@ -340,12 +290,24 @@ async function fetchBatch(batchPoints) {
     !Array.isArray(directions) || directions.length === 0;
 
   if (isInvalidResponse) {
-    await writeInvalidResponseDebug({
-      url: url.toString(),
-      status,
-      contentType,
-      json: data
-    });
+    try {
+      await fs.promises.writeFile(
+        '/tmp/wind-openmeteo-invalid.json',
+        JSON.stringify(
+          {
+            url: url.toString(),
+            status,
+            contentType,
+            keys: Object.keys(data || {}),
+            bodyPreview,
+            data
+          },
+          null,
+          2
+        ),
+        'utf8'
+      );
+    } catch {}
     const error = new Error('Antwort enthält keine Stundenzeiten');
     error.status = status;
     throw error;
