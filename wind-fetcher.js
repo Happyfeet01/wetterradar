@@ -54,6 +54,7 @@ const TTL_HOURS = (() => {
 const HOURLY_PARAMS = 'wind_speed_10m,wind_direction_10m';
 const MIN_TIMEOUT_MS = 90_000;
 const MAX_BATCH_SIZE = 50;
+const BATCH_DELAY_MS = 1200;
 
 async function fetchJsonTextFirst(url) {
   const res = await fetchFn(url, { cache: 'no-store' });
@@ -140,6 +141,10 @@ async function writeJsonAtomic(filePath, payload) {
   await fs.promises.rename(tmpPath, filePath);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function updateFiles(payload) {
   await ensureOutputDir(OUTPUT_DIR);
   await writeJsonAtomic(OUTPUT_FILE, payload);
@@ -191,27 +196,6 @@ function chunkArray(items, size) {
     chunks.push(items.slice(i, i + size));
   }
   return chunks;
-}
-
-function alignMultiLocationsToPoints(dataArray, points) {
-  if (!Array.isArray(dataArray) || dataArray.length === 0) return [];
-  if (dataArray.length === points.length) return dataArray;
-
-  const byId = new Map();
-  let firstNoId = null;
-  for (const loc of dataArray) {
-    const id = Number(loc?.location_id);
-    if (Number.isFinite(id)) byId.set(id, loc);
-    else if (!firstNoId) firstNoId = loc;
-  }
-
-  const aligned = new Array(points.length);
-  aligned[0] = firstNoId ?? dataArray[0];
-
-  for (let i = 1; i < points.length; i++) {
-    aligned[i] = byId.get(i) ?? dataArray[i] ?? null;
-  }
-  return aligned;
 }
 
 function extractLocationLayer(series, timeCount, locationCount, label) {
@@ -340,19 +324,26 @@ async function fetchBatch(batchPoints) {
   let speedUnit;
 
   if (isArrayResponse) {
-    if (!data.length) {
+    if (!Array.isArray(data) || !data.length) {
       await writeDebugInvalid();
-      const error = new Error('Antwort enthält keine Stundenzeiten');
+      const error = new Error('Antwort enthält keine Locations im Array');
       error.status = status;
       throw error;
     }
 
-    const aligned = alignMultiLocationsToPoints(data, batchPoints);
-
-    const firstTimes = aligned[0]?.hourly?.time;
-    if (!Array.isArray(firstTimes) || firstTimes.length === 0) {
+    if (data.length !== batchPoints.length) {
       await writeDebugInvalid();
-      const error = new Error('Antwort enthält keine Stundenzeiten');
+      const error = new Error(
+        `Antwort enthält falsche Anzahl Locations: ${data.length} (erwartet ${batchPoints.length})`
+      );
+      error.status = status;
+      throw error;
+    }
+
+    const firstTimes = data[0]?.hourly?.time;
+    if (!Array.isArray(firstTimes) || firstTimes.length === 0 || firstTimes[0] == null) {
+      await writeDebugInvalid();
+      const error = new Error('Antwort enthält keine Stundenzeiten (hourly.time fehlt)');
       error.status = status;
       throw error;
     }
@@ -362,34 +353,48 @@ async function fetchBatch(batchPoints) {
       throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
     }
 
-    speedSeries = [];
-    dirSeries = [];
+    speedSeries = new Array(batchPoints.length);
+    dirSeries = new Array(batchPoints.length);
+    const seen = new Set();
+
     for (let i = 0; i < batchPoints.length; i++) {
-      const loc = aligned[i];
+      const loc = data[i];
+      const targetIdx = Number.isFinite(Number(loc?.location_id)) ? Number(loc.location_id) : i;
 
-      if (!loc) {
+      if (targetIdx < 0 || targetIdx >= batchPoints.length) {
         await writeDebugInvalid();
-        const error = new Error(`Antwort enthält nicht alle Locations (Index fehlt: ${i})`);
+        const error = new Error(
+          `Antwort enthält ungültigen location_id Index ${targetIdx} (Batchgröße ${batchPoints.length})`
+        );
         error.status = status;
         throw error;
       }
 
-      const hasData =
-        Array.isArray(loc?.hourly?.time) &&
-        loc.hourly.time.length > 0 &&
-        loc.hourly?.wind_speed_10m?.length > 0 &&
-        loc.hourly?.wind_direction_10m?.length > 0;
+      const hourly = loc?.hourly;
+      const time0 = hourly?.time?.[0];
+      const speed0 = hourly?.wind_speed_10m?.[0];
+      const dir0 = hourly?.wind_direction_10m?.[0];
 
-      if (!hasData) {
+      if (time0 == null || !Number.isFinite(speed0) || !Number.isFinite(dir0)) {
         await writeDebugInvalid();
-        const error = new Error('Antwort enthält keine Stundenzeiten');
+        const error = new Error(
+          `Antwort enthält ungültige Winddaten (Index ${i}, location_id ${loc?.location_id ?? 'n/a'})`
+        );
         error.status = status;
         throw error;
       }
 
-      speedSeries.push(loc.hourly.wind_speed_10m[0]);
-      dirSeries.push(loc.hourly.wind_direction_10m[0]);
+      speedSeries[targetIdx] = speed0;
+      dirSeries[targetIdx] = dir0;
+      seen.add(targetIdx);
       speedUnit = speedUnit ?? loc?.hourly_units?.wind_speed_10m;
+    }
+
+    if (seen.size !== batchPoints.length) {
+      await writeDebugInvalid();
+      const error = new Error('Antwort enthält nicht alle Locations (Duplikate oder fehlende Indizes)');
+      error.status = status;
+      throw error;
     }
   } else {
     const hourly = data.hourly ?? {};
@@ -450,7 +455,8 @@ async function fetchWindField() {
 
   const batches = chunkArray(grid.points, MAX_BATCH_SIZE);
 
-  for (const batch of batches) {
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
     try {
       const { datasetTimeIso, vectors } = await fetchBatch(batch);
       datasetTime = datasetTime ?? datasetTimeIso;
@@ -460,6 +466,10 @@ async function fetchWindField() {
       for (const vector of vectors) {
         uData[vector.idx] = vector.u;
         vData[vector.idx] = vector.v;
+      }
+
+      if (i < batches.length - 1) {
+        await sleep(BATCH_DELAY_MS);
       }
     } catch (err) {
       if (err?.status === 429) {
