@@ -54,7 +54,7 @@ const TTL_HOURS = (() => {
 const HOURLY_PARAMS = 'wind_speed_10m,wind_direction_10m';
 const MIN_TIMEOUT_MS = 90_000;
 const MAX_BATCH_SIZE = 50;
-const BATCH_DELAY_MS = 1200;
+const BATCH_DELAY_MS = Number(process.env.WIND_BATCH_DELAY_MS ?? 1500);
 
 async function fetchJsonTextFirst(url) {
   const res = await fetchFn(url, { cache: 'no-store' });
@@ -64,7 +64,13 @@ async function fetchJsonTextFirst(url) {
 
   const text = await res.text(); // wichtig: erst Text lesen
   if (!res.ok) {
-    throw new Error(`Open-Meteo ${status}: ${text.slice(0, 300)}`);
+    const err = new Error(`Open-Meteo ${status}: ${text.slice(0, 300)}`);
+    err.status = status;
+    err.body = text;
+    if (status === 429) {
+      err.code = 'RATE_LIMIT';
+    }
+    throw err;
   }
   if (!text || text.trim().length < 2) {
     throw new Error('API lieferte eine leere Antwort');
@@ -198,6 +204,15 @@ function chunkArray(items, size) {
   return chunks;
 }
 
+function toKey(lat, lon) {
+  const latNum = Number(lat);
+  const lonNum = Number(lon);
+  if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+    return null;
+  }
+  return `${latNum.toFixed(3)},${lonNum.toFixed(3)}`;
+}
+
 function extractLocationLayer(series, timeCount, locationCount, label) {
   if (!Array.isArray(series) || series.length === 0) {
     throw new Error(`Antwort enthält keine Werte für ${label}`);
@@ -282,6 +297,9 @@ async function fetchBatch(batchPoints) {
     url.toString()
   );
   const isArrayResponse = Array.isArray(data);
+  const pointIndexByKey = new Map(
+    batchPoints.map((point, idx) => [toKey(point.lat, point.lon), idx])
+  );
 
   const writeDebugInvalid = async () => {
     try {
@@ -359,7 +377,20 @@ async function fetchBatch(batchPoints) {
 
     for (let i = 0; i < batchPoints.length; i++) {
       const loc = data[i];
-      const targetIdx = Number.isFinite(Number(loc?.location_id)) ? Number(loc.location_id) : i;
+      let targetIdx = Number.isFinite(Number(loc?.location_id)) ? Number(loc.location_id) : null;
+
+      if (targetIdx == null || targetIdx < 0 || targetIdx >= batchPoints.length) {
+        const key = toKey(loc?.latitude, loc?.longitude);
+        if (!key || !pointIndexByKey.has(key)) {
+          await writeDebugInvalid();
+          const error = new Error(
+            `Antwort enthält ungültige Location-Zuordnung (Index ${i}, location_id ${loc?.location_id ?? 'n/a'})`
+          );
+          error.status = status;
+          throw error;
+        }
+        targetIdx = pointIndexByKey.get(key);
+      }
 
       if (targetIdx < 0 || targetIdx >= batchPoints.length) {
         await writeDebugInvalid();
@@ -469,11 +500,13 @@ async function fetchWindField() {
       }
 
       if (i < batches.length - 1) {
-        await sleep(BATCH_DELAY_MS);
+        await sleep(BATCH_DELAY_MS + Math.floor(Math.random() * 250));
       }
     } catch (err) {
-      if (err?.status === 429) {
-        console.warn('[wind] API rate limit (429) – behalte letzte erfolgreiche Datei.');
+      if (err?.code === 'RATE_LIMIT') {
+        console.warn(
+          '[wind] API rate limit erreicht (429), behalte bestehende Datei und beende erfolgreich.'
+        );
         return { rateLimited: true };
       }
       if (isEmptyApiResponseError(err)) {
