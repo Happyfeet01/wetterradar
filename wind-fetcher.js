@@ -193,6 +193,41 @@ function chunkArray(items, size) {
   return chunks;
 }
 
+function alignMultiLocationsToPoints(dataArray, points) {
+  if (!Array.isArray(dataArray) || dataArray.length === 0) {
+    throw new Error('Leere Multi-Location Antwort');
+  }
+
+  if (dataArray.length === points.length) {
+    return dataArray;
+  }
+
+  const byIdx = new Map();
+  let firstNoId = null;
+
+  for (let k = 0; k < dataArray.length; k++) {
+    const loc = dataArray[k];
+    const id = Number(loc?.location_id);
+    if (Number.isFinite(id)) byIdx.set(id, loc);
+    else if (!firstNoId) firstNoId = loc;
+  }
+
+  const aligned = new Array(points.length);
+  aligned[0] = firstNoId ?? dataArray[0];
+
+  for (let i = 1; i < points.length; i++) {
+    aligned[i] = byIdx.get(i) ?? dataArray[i];
+  }
+
+  for (let i = 0; i < aligned.length; i++) {
+    if (!aligned[i]) {
+      throw new Error(`Antwort enthält nicht genug Locations (missing index ${i})`);
+    }
+  }
+
+  return aligned;
+}
+
 function extractLocationLayer(series, timeCount, locationCount, label) {
   if (!Array.isArray(series) || series.length === 0) {
     throw new Error(`Antwort enthält keine Werte für ${label}`);
@@ -280,6 +315,18 @@ async function fetchBatch(batchPoints) {
 
   const writeDebugInvalid = async () => {
     try {
+      const stats = isArrayResponse
+        ? {
+            requestedPoints: batchPoints.length,
+            returnedItems: data.length,
+            hasLocationId:
+              data.length === 0
+                ? 0
+                : data.filter((item) => Number.isFinite(Number(item?.location_id))).length /
+                  data.length,
+            sampleLatLon: data.slice(0, 3).map((item) => ({ lat: item?.latitude, lon: item?.longitude }))
+          }
+        : undefined;
       await fs.promises.writeFile(
         '/tmp/wind-openmeteo-invalid.json',
         JSON.stringify(
@@ -290,6 +337,7 @@ async function fetchBatch(batchPoints) {
             bodyPreview,
             isArrayResponse,
             dataLength: Array.isArray(data) ? data.length : undefined,
+            stats,
             data
           },
           null,
@@ -328,25 +376,27 @@ async function fetchBatch(batchPoints) {
       throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
     }
 
-    const toKey = (lat, lon) => `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
-    const byKey = new Map();
-    for (const loc of data) {
-      const key = toKey(loc?.latitude, loc?.longitude);
-      byKey.set(key, loc);
-    }
+    const aligned = alignMultiLocationsToPoints(data, batchPoints);
 
     speedSeries = [];
     dirSeries = [];
-    for (const point of batchPoints) {
-      const key = toKey(point.lat, point.lon);
-      const loc = byKey.get(key);
-      if (!loc) {
+    for (let i = 0; i < batchPoints.length; i++) {
+      const loc = aligned[i];
+      const hasData =
+        Array.isArray(loc?.hourly?.time) &&
+        loc.hourly.time.length > 0 &&
+        loc.hourly?.wind_speed_10m?.length > 0 &&
+        loc.hourly?.wind_direction_10m?.length > 0;
+
+      if (!hasData) {
         await writeDebugInvalid();
-        throw new Error(`Antwort enthält nicht alle angefragten Punkte (fehlend: ${key})`);
+        const error = new Error('Antwort enthält keine Stundenzeiten');
+        error.status = status;
+        throw error;
       }
 
-      speedSeries.push(loc?.hourly?.wind_speed_10m?.[0]);
-      dirSeries.push(loc?.hourly?.wind_direction_10m?.[0]);
+      speedSeries.push(loc.hourly.wind_speed_10m[0]);
+      dirSeries.push(loc.hourly.wind_direction_10m[0]);
       speedUnit = speedUnit ?? loc?.hourly_units?.wind_speed_10m;
     }
   } else {
