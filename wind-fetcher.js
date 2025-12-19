@@ -194,21 +194,14 @@ function chunkArray(items, size) {
 }
 
 function alignMultiLocationsToPoints(dataArray, points) {
-  if (!Array.isArray(dataArray) || dataArray.length === 0) {
-    throw new Error('Leere Multi-Location Antwort');
-  }
+  if (!Array.isArray(dataArray) || dataArray.length === 0) return [];
+  if (dataArray.length === points.length) return dataArray;
 
-  if (dataArray.length === points.length) {
-    return dataArray;
-  }
-
-  const byIdx = new Map();
+  const byId = new Map();
   let firstNoId = null;
-
-  for (let k = 0; k < dataArray.length; k++) {
-    const loc = dataArray[k];
+  for (const loc of dataArray) {
     const id = Number(loc?.location_id);
-    if (Number.isFinite(id)) byIdx.set(id, loc);
+    if (Number.isFinite(id)) byId.set(id, loc);
     else if (!firstNoId) firstNoId = loc;
   }
 
@@ -216,15 +209,8 @@ function alignMultiLocationsToPoints(dataArray, points) {
   aligned[0] = firstNoId ?? dataArray[0];
 
   for (let i = 1; i < points.length; i++) {
-    aligned[i] = byIdx.get(i) ?? dataArray[i];
+    aligned[i] = byId.get(i) ?? dataArray[i] ?? null;
   }
-
-  for (let i = 0; i < aligned.length; i++) {
-    if (!aligned[i]) {
-      throw new Error(`Antwort enthält nicht genug Locations (missing index ${i})`);
-    }
-  }
-
   return aligned;
 }
 
@@ -361,27 +347,33 @@ async function fetchBatch(batchPoints) {
       throw error;
     }
 
-    const firstHourly = data[0]?.hourly ?? {};
-    const times = firstHourly.time;
+    const aligned = alignMultiLocationsToPoints(data, batchPoints);
 
-    if (!Array.isArray(times) || times.length === 0) {
+    const firstTimes = aligned[0]?.hourly?.time;
+    if (!Array.isArray(firstTimes) || firstTimes.length === 0) {
       await writeDebugInvalid();
       const error = new Error('Antwort enthält keine Stundenzeiten');
       error.status = status;
       throw error;
     }
 
-    datasetTimeIso = toIsoString(times[0]);
+    datasetTimeIso = toIsoString(firstTimes[0]);
     if (!datasetTimeIso) {
       throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
     }
-
-    const aligned = alignMultiLocationsToPoints(data, batchPoints);
 
     speedSeries = [];
     dirSeries = [];
     for (let i = 0; i < batchPoints.length; i++) {
       const loc = aligned[i];
+
+      if (!loc) {
+        await writeDebugInvalid();
+        const error = new Error(`Antwort enthält nicht alle Locations (Index fehlt: ${i})`);
+        error.status = status;
+        throw error;
+      }
+
       const hasData =
         Array.isArray(loc?.hourly?.time) &&
         loc.hourly.time.length > 0 &&
