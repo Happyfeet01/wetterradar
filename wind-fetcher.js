@@ -57,16 +57,16 @@ const TTL_HOURS = (() => {
 const HOURLY_PARAMS = 'wind_speed_10m,wind_direction_10m';
 const MIN_TIMEOUT_MS = 90_000;
 const MAX_BATCH_SIZE = (() => {
-  const value = Number(process.env.WIND_MAX_BATCH_SIZE ?? 25);
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 25;
+  const value = Number(process.env.WIND_MAX_BATCH_SIZE ?? 10);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 10;
 })();
 const BATCH_DELAY_MS = (() => {
-  const value = Number(process.env.WIND_BATCH_DELAY_MS ?? 1500);
-  return Number.isFinite(value) && value >= 0 ? value : 1500;
+  const value = Number(process.env.WIND_BATCH_DELAY_MS ?? 3000);
+  return Number.isFinite(value) && value >= 0 ? value : 3000;
 })();
 const MAX_RETRIES = (() => {
-  const value = Number(process.env.WIND_MAX_RETRIES ?? 5);
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 5;
+  const value = Number(process.env.WIND_MAX_RETRIES ?? 8);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 8;
 })();
 const BACKOFF_MS = (() => {
   const value = Number(process.env.WIND_BACKOFF_MS ?? 60_000);
