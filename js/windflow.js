@@ -2,15 +2,29 @@
 const WIND_ENDPOINTS = ['/wind/current.json', '/wind/fallback.json'];
 
 // Optionen der Velocity-Layer für ein ruhigeres Partikelfeld
+
 const VELOCITY_OPTIONS = {
-  maxVelocity: 25, // wird später dynamisch mit meta.stats.maxVelocity überschrieben
-  velocityScale: 0.0025, // ruhiger als ganz früher, aber nicht zu langsam
+  maxVelocity: 25,
+  velocityScale: 0.0025,
   particleAge: 70,
-  lineWidth: 2, // etwas dicker -> besser sichtbar
-  particleMultiplier: 1 / 300,
-  opacity: 0.9, // fast volle Deckkraft
-  // Farbskala mit hoher Sichtbarkeit auf hellen UND dunklen Karten
-  colorScale: ['#00ffff', '#00ff00', '#ffff00', '#ff8000', '#ff0000'],
+
+  // 👇 sichtbar machen
+  lineWidth: 2.5,                 // war 2
+  particleMultiplier: 1 / 220,     // war 1/300 (mehr Partikel)
+  opacity: 0.95,                   // war 0.9
+
+  // 👇 wichtig: low-wind Farben dunkler, damit sie auf heller Karte sichtbar sind
+  // (statt hellgrün -> eher dunkles blau/violett)
+  colorScale: [
+    "#1a237e", // sehr wenig Wind (dunkles Indigo)
+    "#1565c0", // blau
+    "#00838f", // teal
+    "#2e7d32", // grün
+    "#f9a825", // gelb
+    "#ef6c00", // orange
+    "#c62828"  // rot
+  ],
+
   displayValues: false,
   displayOptions: {
     velocityType: 'Wind',
