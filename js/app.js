@@ -34,6 +34,7 @@ const ui = {
   lblTime:$('lblTime'), btnLocate:$('btnLocate'), lblLocationWind:$('lblLocationWind'),
   selColor:$('selColor'), chkSmooth:$('chkSmooth'), rngSpeed:$('rngSpeed'),
   rngOpacity:$('rngOpacity'), lblOpacity:$('lblOpacity'),
+  chkPrecipType:$('chkPrecipType'), lblPrecipStatus:$('lblPrecipStatus'),
   chkClouds:$('chkClouds'), rngClouds:$('rngClouds'), lblClouds:$('lblClouds'),
   chkWarn:$('chkWarn'), chkWarnList:$('chkWarnList'),
   chkDark:$('chkDark'),
@@ -58,6 +59,16 @@ if(ui.btnPanelToggle && ui.controlPanel){
 
 function syncClouds(timeUnix){ Sat.syncTo(timeUnix); }
 
+function updatePrecipStatus(){
+  if(!ui.lblPrecipStatus) return;
+  if(ui.chkPrecipType?.checked){
+    ui.lblPrecipStatus.textContent = 'PrecipType: ON';
+    ui.lblPrecipStatus.style.display = 'inline-block';
+  }else{
+    ui.lblPrecipStatus.style.display = 'none';
+  }
+}
+
 async function boot(){
   await Radar.loadRadar();
   await Sat.loadSatellite();
@@ -79,6 +90,7 @@ async function boot(){
   ui.rngOpacity.oninput = ()=>{
     ui.lblOpacity.textContent = Math.round(Number(ui.rngOpacity.value)*100)+'%';
   };
+  ui.chkPrecipType.onchange = ()=>{ updatePrecipStatus(); Radar.paint(L,map,ui,syncClouds); };
   ui.selColor.onchange = ()=> Radar.paint(L,map,ui,syncClouds);
   ui.chkSmooth.onchange = ()=> Radar.paint(L,map,ui,syncClouds);
 
@@ -87,6 +99,7 @@ async function boot(){
 
   ui.chkDark.onchange = ()=> applyDarkMode(ui.chkDark.checked);
   applyDarkMode(ui.chkDark.checked);
+  updatePrecipStatus();
 
   const locationTooltipOptions = { permanent:true, direction:'top', offset:[0,-22], className:'wind-tooltip' };
   let locateMarker=null, locateCircle=null;

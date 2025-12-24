@@ -65,6 +65,11 @@ body.dark .panel-toggle{background:rgba(255,255,255,0.12);}
 .hint{font-size:12px;color:var(--fg-hint)}
 .badge{display:inline-block;padding:2px 6px;border-radius:6px;font-size:12px;background:#eef;color:#223}
 body.dark .badge{background:rgba(33,150,243,0.35);color:#e3f2fd;}
+.precip-legend{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.legend-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-weight:700;font-size:12px;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.18);}
+.legend-chip--rain{background:linear-gradient(135deg,#1e88e5,#0d47a1);}
+.legend-chip--snow{background:linear-gradient(135deg,#90caf9,#e3f2fd);color:#0b3954;border:1px solid rgba(0,0,0,0.08);}
+body.dark .legend-chip--snow{color:#0e1d2f;border-color:rgba(255,255,255,0.18);box-shadow:0 1px 4px rgba(0,0,0,0.35);}
 
 /* Legende oben rechts */
 .legend{

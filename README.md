@@ -70,3 +70,9 @@ systemctl enable --now wetterradar-noaa-wind.timer
 - Beim Upload/Sync der statischen Seite muss der neue Ordner `wind/` mitgenommen werden (z. B. `rsync -av --delete css js wind index.html …`).
 - Auf dem Server sollten Schreibrechte für den Fetcher auf `/var/www/wetterradar/wind/current.json` bestehen.
 - Die Beispiel-Nginx-Config (siehe `etc/nginx/sites-available/wetter.domain.tld`) enthält einen Location-Block für `/wind/`, der Caching + CORS-Header setzt.
+
+## Lokale Entwicklung & Kurztest
+
+- Einfacher Start: `python -m http.server 8000` im Repo-Root oder `npx http-server . -p 8000` (optional `npm install` für http-server).
+- Im Bedienpanel den Toggle **„Niederschlagstyp“** aktivieren. Ein Badge „PrecipType: ON“ bestätigt den Modus, die kleine Legende zeigt Regen (dunkelblau) vs. Schnee (hellblau).
+- Visuelle Prüfung: Bei aktiven Schneesignalen liefert RainViewer (mit `snow=1`) hellblaue Flächen für Schnee, Regen bleibt dunkelblau/grün je nach Farbschema. Ohne Schneefall bleibt die Ansicht wie zuvor; zur Kontrolle kann der Badge genutzt werden.
