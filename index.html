@@ -60,6 +60,16 @@
         <span id="lblOpacity">85%</span>
       </div>
       <div class="row">
+        <label for="chkPrecipType">Niederschlagstyp</label>
+        <input type="checkbox" id="chkPrecipType">
+        <span class="hint">Regen vs. Schnee</span>
+        <div class="precip-legend" id="precipLegend" aria-label="Legende Niederschlagstyp">
+          <span class="legend-chip legend-chip--rain">Regen</span>
+          <span class="legend-chip legend-chip--snow">Schnee</span>
+        </div>
+        <span id="lblPrecipStatus" class="badge" style="display:none"></span>
+      </div>
+      <div class="row">
         <label for="chkClouds">Wolken</label>
         <input type="checkbox" id="chkClouds">
         <input id="rngClouds" type="range" min="0.2" max="1" step="0.05" value="0.7" class="grow">

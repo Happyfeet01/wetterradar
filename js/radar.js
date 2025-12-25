@@ -10,10 +10,20 @@ export async function loadRadar(){
   RV_HOST = data.host || RV_HOST_FALLBACK;
   frames = [...(data?.radar?.past ?? []), ...(data?.radar?.nowcast ?? [])];
 
+  if(!frames.length){
+    idx = 0;
+    return frames;
+  }
+
   // Setze den Index auf den letzten Zeitpunkt, der nicht in der Zukunft liegt
   const now = Date.now() / 1000;
-  idx = frames.reduce((closest, frame, i) =>
-    (Math.abs(frame.time - now) < Math.abs(frames[closest].time - now) && frame.time <= now) ? i : closest, 0);
+  let latestPastIdx = -1;
+  frames.forEach((frame, i)=>{
+    if(frame.time <= now && (latestPastIdx === -1 || frame.time > frames[latestPastIdx].time)){
+      latestPastIdx = i;
+    }
+  });
+  idx = latestPastIdx >= 0 ? latestPastIdx : 0;
   return frames;
 }
 
@@ -24,7 +34,7 @@ export function step(d){ if(!frames.length) return; idx = (idx + d + frames.leng
 function radarUrl(frame, ui){
   const color = Number(ui.selColor.value) || 4;
   const smooth = ui.chkSmooth.checked ? 1 : 0;
-  const snow = 0;
+  const snow = ui?.chkPrecipType?.checked ? 1 : 0;
   const host=(RV_HOST||RV_HOST_FALLBACK).replace(/\/+$/,'');
   let path=String(frame.path||'').replace(/^\/+/, '');
   if (!path.startsWith('v2/')) path = 'v2/radar/' + path;
