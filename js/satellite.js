@@ -5,7 +5,18 @@ let satFrames = [];
 let layer = null;
 
 export async function loadSatellite(){
-  const data = await fetch(RV_API, { cache:'no-store' }).then(r=>r.json());
+  let data = null;
+  try {
+    const res = await fetch(RV_API, { cache:'no-store' });
+    if (!res.ok) {
+      console.error('RainViewer weather-maps.json failed', res.status, res.statusText);
+      return satFrames;
+    }
+    data = await res.json();
+  } catch (err) {
+    console.error('RainViewer weather-maps.json fetch error', err);
+    return satFrames;
+  }
   RV_HOST = data.host || RV_HOST_FALLBACK;
   satFrames = [...(data?.satellite?.infrared ?? [])];
   return satFrames;

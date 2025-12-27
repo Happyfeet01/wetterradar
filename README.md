@@ -70,6 +70,7 @@ systemctl enable --now wetterradar-noaa-wind.timer
 - Beim Upload/Sync der statischen Seite muss der neue Ordner `wind/` mitgenommen werden (z. B. `rsync -av --delete css js wind index.html …`).
 - Auf dem Server sollten Schreibrechte für den Fetcher auf `/var/www/wetterradar/wind/current.json` bestehen.
 - Die Beispiel-Nginx-Config (siehe `etc/nginx/sites-available/wetter.domain.tld`) enthält einen Location-Block für `/wind/`, der Caching + CORS-Header setzt.
+- RainViewer `weather-maps.json` wird serverseitig via Nginx unter `/rainviewer/weather-maps.json` auf `https://api.rainviewer.com/public/weather-maps.json` proxied, damit das Frontend sie same-origin laden kann.
 
 ## Lokale Entwicklung & Kurztest
 
