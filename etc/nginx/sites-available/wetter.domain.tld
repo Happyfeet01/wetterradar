@@ -30,15 +30,7 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     # Content Security Policy: erlaub Leaflet + OSM + RainViewer + unpkg
-    add_header Content-Security-Policy "
-      default-src 'self';
-      img-src 'self' data: https://tilecache.rainviewer.com https://*.tile.openstreetmap.org;
-      script-src 'self' https://unpkg.com https://cdn.jsdelivr.net;
-      style-src 'self' 'unsafe-inline' https://unpkg.com;
-      connect-src 'self' https://api.rainviewer.com https://api.open-meteo.com https://nominatim.openstreetmap.org;
-      font-src 'self' data:;
-      child-src 'none'; frame-ancestors 'self';
-    " always;
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: https://tilecache.rainviewer.com https://*.tile.openstreetmap.org; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://api.open-meteo.com https://nominatim.openstreetmap.org; font-src 'self' data:; child-src 'none'; frame-ancestors 'self';" always;
     # --- Gzip für Text ---
     gzip on;
     gzip_comp_level 5;
@@ -89,6 +81,16 @@ server {
         add_header Access-Control-Allow-Origin *;
         add_header Cache-Control "public, max-age=120, stale-while-revalidate=600";
         try_files $uri =404;
+    }
+
+    # RainViewer API Proxy (same-origin Fetch)
+    location = /rainviewer/weather-maps.json {
+        proxy_pass https://api.rainviewer.com/public/weather-maps.json;
+        proxy_set_header Host api.rainviewer.com;
+        proxy_ssl_server_name on;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 10s;
+        proxy_send_timeout 10s;
     }
 
     # ACME-Challenge (für Certbot Webroot)

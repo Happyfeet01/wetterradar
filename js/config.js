@@ -3,7 +3,7 @@ export const OSM_DARK_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/
 export const OSM_ATTRIB = '© OpenStreetMap-Mitwirkende';
 export const OSM_DARK_ATTRIB = '© OpenStreetMap-Mitwirkende, © CARTO';
 
-export const RV_API = 'https://api.rainviewer.com/public/weather-maps.json';
+export const RV_API = '/rainviewer/weather-maps.json';
 export const RV_HOST_FALLBACK = 'https://tilecache.rainviewer.com';
 // RainViewer liefert die Radar- und Satelliten-Tiles inzwischen standardmäßig mit
 // 512 px Kantenlänge aus. Mit 512er Tiles plus `zoomOffset:-1` wirken die Bilder

@@ -6,7 +6,18 @@ let idx = 0;
 let curr=null, next=null;
 
 export async function loadRadar(){
-  const data = await fetch(RV_API, { cache:'no-store' }).then(r=>r.json());
+  let data = null;
+  try {
+    const res = await fetch(RV_API, { cache:'no-store' });
+    if (!res.ok) {
+      console.error('RainViewer weather-maps.json failed', res.status, res.statusText);
+      return frames;
+    }
+    data = await res.json();
+  } catch (err) {
+    console.error('RainViewer weather-maps.json fetch error', err);
+    return frames;
+  }
   RV_HOST = data.host || RV_HOST_FALLBACK;
   frames = [...(data?.radar?.past ?? []), ...(data?.radar?.nowcast ?? [])];
 
