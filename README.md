@@ -2,6 +2,12 @@
 
 Interaktive Wetterkarte mit Radar- und Satellitenanimation, Wind-Partikelfeld und DWD-Warngebieten (CAP-Polygone). Leichtgewichtig mit Leaflet und Vanilla-JS.
 
+Nutzbar unter https://wetter.larsmueller.net
+
+Kaffeekasse: https://www.paypal.me/LarsM1980
+
+https://de.liberapay.com/Esmuellerthier/
+
 ## Features
 
 - **Niederschlagsradar (RainViewer)**
