@@ -1,6 +1,6 @@
 import { RV_API, RV_HOST_FALLBACK, RADAR_SIZE, RADAR_ZOOM_OFFSET } from './config.js';
 
-let RV_HOST = RV_HOST_FALLBACK;
+glet RV_HOST = RV_HOST_FALLBACK;
 let satFrames = [];
 let layer = null;
 
@@ -8,22 +8,25 @@ export async function loadSatellite(){
   let data = null;
   try {
     const res = await fetch(RV_API, { cache:'no-store' });
+    console.log('RainViewer API response:', res); // Protokollieren der API-Antwort
     if (!res.ok) {
       console.error('RainViewer weather-maps.json failed', res.status, res.statusText);
       return satFrames;
     }
     data = await res.json();
+    console.log('RainViewer API data:', data); // Protokollieren der API-Daten
   } catch (err) {
     console.error('RainViewer weather-maps.json fetch error', err);
     return satFrames;
   }
   RV_HOST = data.host || RV_HOST_FALLBACK;
   satFrames = [...(data?.satellite?.infrared ?? [])];
+  console.log('Satellite frames:', satFrames); // Protokollieren der Satellitenframes
   return satFrames;
 }
 
 function satUrl(frame){
-  const host=(RV_HOST||RV_HOST_FALLBACK).replace(/\/+$/,'');
+  const host=(RV_HOST||RV_HOST_FALLBACK).replace(//+$/,'');
   let path=String(frame.path||'').replace(/^\/+/, '');
   if (!path.startsWith('v2/')) path = 'v2/satellite/' + path;
   return `${host}/${path}/${RADAR_SIZE}/{z}/{x}/{y}/0/0_0.png?${frame.time}`;
