@@ -9,17 +9,20 @@ export async function loadRadar(){
   let data = null;
   try {
     const res = await fetch(RV_API, { cache:'no-store' });
+    console.log('RainViewer API response:', res); // Protokollieren der API-Antwort
     if (!res.ok) {
       console.error('RainViewer weather-maps.json failed', res.status, res.statusText);
       return frames;
     }
     data = await res.json();
+    console.log('RainViewer API data:', data); // Protokollieren der API-Daten
   } catch (err) {
     console.error('RainViewer weather-maps.json fetch error', err);
     return frames;
   }
   RV_HOST = data.host || RV_HOST_FALLBACK;
   frames = [...(data?.radar?.past ?? []), ...(data?.radar?.nowcast ?? [])];
+  console.log('Radar frames:', frames); // Protokollieren der Radarframes
 
   if(!frames.length){
     idx = 0;
@@ -29,7 +32,7 @@ export async function loadRadar(){
   // Setze den Index auf den letzten Zeitpunkt, der nicht in der Zukunft liegt
   const now = Date.now() / 1000;
   let latestPastIdx = -1;
-  frames.forEach((frame, i)=>{
+  frames.forEach((frame, i)={
     if(frame.time <= now && (latestPastIdx === -1 || frame.time > frames[latestPastIdx].time)){
       latestPastIdx = i;
     }
@@ -46,7 +49,7 @@ function radarUrl(frame, ui){
   const color = Number(ui.selColor.value) || 4;
   const smooth = ui.chkSmooth.checked ? 1 : 0;
   const snow = ui?.chkPrecipType?.checked ? 1 : 0;
-  const host=(RV_HOST||RV_HOST_FALLBACK).replace(/\/+$/,'');
+  const host=(RV_HOST||RV_HOST_FALLBACK).replace(//+$/,'');
   let path=String(frame.path||'').replace(/^\/+/, '');
   if (!path.startsWith('v2/')) path = 'v2/radar/' + path;
   return `${host}/${path}/${RADAR_SIZE}/{z}/{x}/{y}/${color}/${smooth}_${snow}.png?${frame.time}`;
@@ -67,12 +70,14 @@ export function paint(L, map, ui, syncCloudsCb){
   const op = Number(ui.rngOpacity.value);
   ui.lblOpacity.textContent = Math.round(op*100) + '%';
 
-  requestAnimationFrame(()=>{
+  requestAnimationFrame(()={
     if(!next) return;
     next.setOpacity(op);
     if(!curr){ curr=next; next=null; return; }
     curr.setOpacity(0);
-    setTimeout(()=>{ map.removeLayer(curr); curr=next; next=null; }, PLAY_FADE_MS + 40);
+    setTimeout(()={
+      map.removeLayer(curr); curr=next; next=null; 
+    }, PLAY_FADE_MS + 40);
   });
 
   if (syncCloudsCb) syncCloudsCb(f.time);
