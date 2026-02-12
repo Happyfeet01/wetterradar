@@ -49,7 +49,7 @@ function radarUrl(frame, ui){
   const color = Number(ui.selColor.value) || 4;
   const smooth = ui.chkSmooth.checked ? 1 : 0;
   const snow = ui?.chkPrecipType?.checked ? 1 : 0;
-  const host=(RV_HOST||RV_HOST_FALLBACK).replace(//+$/,'');
+  const host=(RV_HOST||RV_HOST_FALLBACK).replace(/\/+$/, '');
   let path=String(frame.path||'').replace(/^\/+/, '');
   if (!path.startsWith('v2/')) path = 'v2/radar/' + path;
   return `${host}/${path}/${RADAR_SIZE}/{z}/{x}/{y}/${color}/${smooth}_${snow}.png?${frame.time}`;
