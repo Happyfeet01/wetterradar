@@ -32,7 +32,7 @@ export async function loadRadar(){
   // Setze den Index auf den letzten Zeitpunkt, der nicht in der Zukunft liegt
   const now = Date.now() / 1000;
   let latestPastIdx = -1;
-  frames.forEach((frame, i)={
+  frames.forEach((frame, i) => {
     if(frame.time <= now && (latestPastIdx === -1 || frame.time > frames[latestPastIdx].time)){
       latestPastIdx = i;
     }
@@ -70,12 +70,12 @@ export function paint(L, map, ui, syncCloudsCb){
   const op = Number(ui.rngOpacity.value);
   ui.lblOpacity.textContent = Math.round(op*100) + '%';
 
-  requestAnimationFrame(()={
+  requestAnimationFrame(() => {
     if(!next) return;
     next.setOpacity(op);
     if(!curr){ curr=next; next=null; return; }
     curr.setOpacity(0);
-    setTimeout(()={
+    setTimeout(() => {
       map.removeLayer(curr); curr=next; next=null; 
     }, PLAY_FADE_MS + 40);
   });
