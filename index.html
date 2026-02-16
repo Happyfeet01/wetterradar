@@ -44,10 +44,8 @@
       </div>
       <div class="row">
         <label for="selColor">Farbschema</label>
-        <select id="selColor">
-          <option value="4" selected>4</option>
-          <option value="3">3</option>
-          <option value="2">2</option>
+        <select id="selColor" disabled>
+          <option value="8" selected>Universal Blue</option>
         </select>
         <label for="chkSmooth">Smooth</label>
         <input type="checkbox" id="chkSmooth" checked>
@@ -70,7 +68,7 @@
         <span id="lblPrecipStatus" class="badge" style="display:none"></span>
       </div>
       <div class="row">
-        <label for="chkClouds">Wolken</label>
+        <label for="chkClouds">Wolken (DWD Satellit)</label>
         <input type="checkbox" id="chkClouds">
         <input id="rngClouds" type="range" min="0.2" max="1" step="0.05" value="0.7" class="grow">
         <span id="lblClouds">70%</span>
@@ -124,7 +122,7 @@
     </div>
   </div>
 
-  <footer class="footer">Radar & Sat: RainViewer • Wind: Open-Meteo • OSM © Mitwirkende</footer>
+  <footer class="footer">Radar: RainViewer • Satellit: DWD • Wind: Open-Meteo • OSM © Mitwirkende</footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin></script>

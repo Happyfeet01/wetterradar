@@ -1,41 +1,24 @@
-import { RV_API, RV_HOST_FALLBACK, RADAR_SIZE, RADAR_ZOOM_OFFSET } from './config.js';
+// Satellitenbilder via DWD WMS (ersetzt RainViewer IR, das seit 2025 eingestellt ist)
+import { DWD_SAT_WMS, DWD_SAT_LAYER } from './config.js';
 
-let RV_HOST = RV_HOST_FALLBACK;
-let satFrames = [];
 let layer = null;
 
 export async function loadSatellite(){
-  let data = null;
-  try {
-    const res = await fetch(RV_API, { cache:'no-store' });
-    if (!res.ok) {
-      console.error('RainViewer weather-maps.json failed', res.status, res.statusText);
-      return satFrames;
-    }
-    data = await res.json();
-  } catch (err) {
-    console.error('RainViewer weather-maps.json fetch error', err);
-    return satFrames;
-  }
-  RV_HOST = data.host || RV_HOST_FALLBACK;
-  satFrames = [...(data?.satellite?.infrared ?? [])];
-  return satFrames;
-}
-
-function satUrl(frame){
-  const host=(RV_HOST||RV_HOST_FALLBACK).replace(/\/+$/,'');
-  let path=String(frame.path||'').replace(/^\/+/, '');
-  if (!path.startsWith('v2/')) path = 'v2/satellite/' + path;
-  return `${host}/${path}/${RADAR_SIZE}/{z}/{x}/{y}/0/0_0.png?${frame.time}`;
+  // DWD WMS benötigt kein Vorab-Laden von Frames –
+  // der Layer zeigt immer den aktuellsten Stand.
+  return [];
 }
 
 export function toggle(L, map, on, opacity=0.7){
   if(on){
-    const f = satFrames[satFrames.length-1];
-    if(!f){ alert('Noch keine Satellitenframes.'); return; }
     if(layer) map.removeLayer(layer);
-    layer = L.tileLayer(satUrl(f), {
-      pane:'cloudPane', tileSize:RADAR_SIZE, zoomOffset:RADAR_ZOOM_OFFSET, opacity
+    layer = L.tileLayer.wms(DWD_SAT_WMS, {
+      layers: DWD_SAT_LAYER,
+      format: 'image/png',
+      transparent: true,
+      pane: 'cloudPane',
+      opacity,
+      attribution: 'Satellit © DWD'
     }).addTo(map);
   }else if(layer){
     map.removeLayer(layer); layer=null;
@@ -45,8 +28,8 @@ export function toggle(L, map, on, opacity=0.7){
 export function setOpacity(val){ if(layer) layer.setOpacity(val); }
 
 export function syncTo(timeUnix){
-  if(!layer || !satFrames.length) return;
-  let best=satFrames[0], dBest=Math.abs(timeUnix-best.time);
-  for(const s of satFrames){ const d=Math.abs(timeUnix-s.time); if(d<dBest){dBest=d; best=s;} }
-  layer.setUrl(satUrl(best));
+  // DWD WMS zeigt immer den aktuellsten Stand – kein Zeitsprung nötig.
+  // Cache-Bust um sicherzustellen, dass das neueste Bild geladen wird.
+  if(!layer) return;
+  layer.setParams({ _t: Date.now() });
 }
