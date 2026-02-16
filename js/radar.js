@@ -19,7 +19,8 @@ export async function loadRadar(){
     return frames;
   }
   RV_HOST = data.host || RV_HOST_FALLBACK;
-  frames = [...(data?.radar?.past ?? []), ...(data?.radar?.nowcast ?? [])];
+  // Nowcast wurde von RainViewer eingestellt – nur noch Past-Frames verwenden
+  frames = [...(data?.radar?.past ?? [])];
 
   if(!frames.length){
     idx = 0;
@@ -29,8 +30,8 @@ export async function loadRadar(){
   // Setze den Index auf den letzten Zeitpunkt, der nicht in der Zukunft liegt
   const now = Date.now() / 1000;
   let latestPastIdx = -1;
-  frames.forEach((frame, i)=>{
-    if(frame.time <= now && (latestPastIdx === -1 || frame.time > frames[latestPastIdx].time)){
+  frames.forEach((frame, i)=>{ 
+    if(frame.time <= now && (latestPastIdx === -1 || frame.time > frames[latestPastIdx].time)){ 
       latestPastIdx = i;
     }
   });
@@ -43,11 +44,12 @@ export function getIndex(){ return idx; }
 export function step(d){ if(!frames.length) return; idx = (idx + d + frames.length) % frames.length; }
 
 function radarUrl(frame, ui){
-  const color = Number(ui.selColor.value) || 4;
+  // RainViewer Free-Tier: nur noch Farbschema 8 (Universal Blue) verfügbar
+  const color = 8;
   const smooth = ui.chkSmooth.checked ? 1 : 0;
   const snow = ui?.chkPrecipType?.checked ? 1 : 0;
   const host=(RV_HOST||RV_HOST_FALLBACK).replace(/\/+$/,'');
-  let path=String(frame.path||'').replace(/^\/+/, '');
+  let path=String(frame.path||'').replace(/^\/+/,'');
   if (!path.startsWith('v2/')) path = 'v2/radar/' + path;
   return `${host}/${path}/${RADAR_SIZE}/{z}/{x}/{y}/${color}/${smooth}_${snow}.png?${frame.time}`;
 }
@@ -58,6 +60,7 @@ export function paint(L, map, ui, syncCloudsCb){
   next = L.tileLayer(radarUrl(f, ui), {
     pane:'radarPane', tileSize:RADAR_SIZE, zoomOffset:RADAR_ZOOM_OFFSET,
     opacity:0, className:'rv-tiles',
+    maxNativeZoom: 7,
     updateWhenZooming:false, updateWhenIdle:true, keepBuffer:4, attribution:'Radar © RainViewer'
   }).addTo(map);
 
