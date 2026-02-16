@@ -20,5 +20,5 @@ export const DWD_WARN_JSON = '/dwd/warnings.json';
 export const DWD_WFS = 'https://maps.dwd.de/geoserver/dwd/ows?service=WFS&version=2.0.0&request=GetFeature&typeNames=dwd:Warnungen_Landkreise&outputFormat=application/json';
 
 // DWD Satellitendaten (WMS) – ersetzt RainViewer IR-Satellit
-export const DWD_SAT_WMS = 'https://maps.dwd.de/geoserver/dwd/ows?';
-export const DWD_SAT_LAYER = 'dwd:SAT_EU_CENTRAL_IR_ENHANCED';
+export const DWD_SAT_WMS = 'https://maps.dwd.de/geoserver/dwd/wms?';
+export const DWD_SAT_LAYER = 'dwd:SAT_WELT_KOMPOSIT';
