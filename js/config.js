@@ -21,4 +21,12 @@ export const DWD_WFS = 'https://maps.dwd.de/geoserver/dwd/ows?service=WFS&versio
 
 // DWD Satellitendaten (WMS) – ersetzt RainViewer IR-Satellit
 export const DWD_SAT_WMS = 'https://maps.dwd.de/geoserver/dwd/wms?';
-export const DWD_SAT_LAYER = 'dwd:SAT_WELT_KOMPOSIT';
+export const DWD_SAT_LAYERS = [
+  // Primärlayer + Fallbacks, da DWD Layernamen gelegentlich angepasst werden.
+  'dwd:SAT_EU_RGB',
+  'dwd:SAT_EU_IR108',
+  'dwd:SAT_WELT_RGB',
+  'dwd:SAT_WELT_IR108',
+  'dwd:SAT_WELT_KOMPOSIT'
+];
+export const DWD_SAT_LAYER = DWD_SAT_LAYERS[0];
