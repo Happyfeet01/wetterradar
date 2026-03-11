@@ -49,7 +49,7 @@ function createLayer(L, map, opacity, layerIndex){
       map.removeLayer(wmsLayer);
       fallbackIndex = nextIndex;
       activeLayerName = DWD_SAT_LAYERS[nextIndex];
-      layer = createLayer(L, map, opacity, nextIndex);
+      layer = createLayer(L, map, wmsLayer.options.opacity ?? opacity, nextIndex);
       console.warn(`DWD Satellitenlayer fehlgeschlagen (${layerName}), Fallback auf ${activeLayerName}.`);
     }
   });
