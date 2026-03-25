@@ -31,8 +31,14 @@ export function toggle(L, map, on, opacity=0.7){
 
     // Falls kein same-origin Proxy vorhanden ist (z.B. lokale Entwicklung),
     // wechsle automatisch auf den direkten DWD-Endpunkt.
+    // In Produktion (HTTPS + nicht localhost) bleibt der Proxy aktiv, damit
+    // Browser-Sicherheitsmechanismen (z.B. ORB/CSP) nicht durch Cross-Origin-
+    // Requests unnötig Fehler produzieren.
     layer.once('tileerror', ()=>{
       if(!layer || usingFallbackHost) return;
+      const host = (typeof window !== 'undefined' && window.location && window.location.hostname) || '';
+      const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+      if(!isLocalhost) return;
       map.removeLayer(layer);
       usingFallbackHost = true;
       layer = createLayer(L, DWD_SAT_WMS_FALLBACK, opacity).addTo(map);
