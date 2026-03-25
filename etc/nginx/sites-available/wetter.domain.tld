@@ -109,6 +109,19 @@ server {
         proxy_connect_timeout 5s;
         proxy_read_timeout 20s;
         proxy_send_timeout 20s;
+        proxy_intercept_errors on;
+        error_page 500 502 503 504 =200 /__dwd_empty_tile.gif;
+        add_header Access-Control-Allow-Origin * always;
+        add_header Cache-Control "public, max-age=60, stale-while-revalidate=120" always;
+    }
+
+    # Liefert ein valides 1x1 GIF bei Upstream-Fehlern, damit Browser
+    # keine ORB-/MIME-Fehler durch HTML-Fehlerseiten bei Bildkacheln werfen.
+    location = /__dwd_empty_tile.gif {
+        internal;
+        empty_gif;
+        add_header Content-Type image/gif always;
+        add_header Cache-Control "no-store" always;
     }
 
     # RainViewer API Proxy (same-origin Fetch)
