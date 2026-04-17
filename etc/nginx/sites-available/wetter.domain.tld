@@ -125,15 +125,6 @@ server {
         add_header Cache-Control "public, max-age=60, stale-while-revalidate=120" always;
     }
 
-    # Liefert ein valides 1x1 GIF bei Upstream-Fehlern, damit Browser
-    # keine ORB-/MIME-Fehler durch HTML-Fehlerseiten bei Bildkacheln werfen.
-    location = /__dwd_empty_tile.gif {
-        internal;
-        empty_gif;
-        add_header Content-Type image/gif always;
-        add_header Cache-Control "no-store" always;
-    }
-
     # RainViewer API Proxy (same-origin Fetch)
     location = /rainviewer/weather-maps.json {
         proxy_pass https://api.rainviewer.com/public/weather-maps.json;
