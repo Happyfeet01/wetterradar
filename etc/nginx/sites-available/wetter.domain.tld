@@ -102,26 +102,25 @@ server {
 
 
     # DWD Satellit WMS Proxy (same-origin für Leaflet WMS)
+    # Hinweis:
+    # - DWD liefert WMS stabil über /geoserver/dwd/ows
+    # - Query-String wird 1:1 weitergereicht
+    # - Upstream-Fehler bleiben absichtlich 5xx, damit Leaflet `tileerror`
+    #   auslösen und das Frontend auf den Direkt-Host fallbacken kann.
     location = /dwd/sat/wms {
-        proxy_pass https://maps.dwd.de/geoserver/dwd/wms$is_args$args;
+        proxy_pass https://maps.dwd.de/geoserver/dwd/ows?$args;
         proxy_set_header Host maps.dwd.de;
         proxy_ssl_server_name on;
+        proxy_set_header Accept "image/*,*/*;q=0.8";
+        proxy_http_version 1.1;
+
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+        proxy_next_upstream_tries 2;
         proxy_connect_timeout 5s;
         proxy_read_timeout 20s;
         proxy_send_timeout 20s;
-        proxy_intercept_errors on;
-        error_page 500 502 503 504 =200 /__dwd_empty_tile.gif;
         add_header Access-Control-Allow-Origin * always;
         add_header Cache-Control "public, max-age=60, stale-while-revalidate=120" always;
-    }
-
-    # Liefert ein valides 1x1 GIF bei Upstream-Fehlern, damit Browser
-    # keine ORB-/MIME-Fehler durch HTML-Fehlerseiten bei Bildkacheln werfen.
-    location = /__dwd_empty_tile.gif {
-        internal;
-        empty_gif;
-        add_header Content-Type image/gif always;
-        add_header Cache-Control "no-store" always;
     }
 
     # RainViewer API Proxy (same-origin Fetch)
