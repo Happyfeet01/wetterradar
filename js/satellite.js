@@ -29,16 +29,12 @@ export function toggle(L, map, on, opacity=0.7){
     usingFallbackHost = false;
     layer = createLayer(L, DWD_SAT_WMS, opacity).addTo(map);
 
-    // Falls kein same-origin Proxy vorhanden ist (z.B. lokale Entwicklung),
+    // Wenn der same-origin Proxy ausfällt (z.B. 5xx vom Upstream),
     // wechsle automatisch auf den direkten DWD-Endpunkt.
-    // In Produktion (HTTPS + nicht localhost) bleibt der Proxy aktiv, damit
-    // Browser-Sicherheitsmechanismen (z.B. ORB/CSP) nicht durch Cross-Origin-
-    // Requests unnötig Fehler produzieren.
+    // Leaflet lädt Kacheln als <img>, daher ist hierfür kein CORS-Read nötig.
+    // Damit bleibt das Satelliten-Layer auch bei Proxy-/Nginx-Störungen nutzbar.
     layer.once('tileerror', ()=>{
       if(!layer || usingFallbackHost) return;
-      const host = (typeof window !== 'undefined' && window.location && window.location.hostname) || '';
-      const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
-      if(!isLocalhost) return;
       map.removeLayer(layer);
       usingFallbackHost = true;
       layer = createLayer(L, DWD_SAT_WMS_FALLBACK, opacity).addTo(map);
