@@ -107,7 +107,9 @@ server {
     # - Query-String wird 1:1 weitergereicht
     # - bei Upstream-Fehlern liefern wir ein valides 1x1 GIF zurück
     location = /dwd/sat/wms {
-        proxy_pass https://maps.dwd.de/geoserver/dwd/wms$is_args$args;
+        # Kein Variablenanteil im Upstream-Host, damit kein separater `resolver`
+        # erforderlich ist (sonst: "no resolver defined to resolve maps.dwd.de").
+        proxy_pass https://maps.dwd.de/geoserver/dwd/wms?$args;
         proxy_set_header Host maps.dwd.de;
         proxy_ssl_server_name on;
         proxy_ssl_name maps.dwd.de;
@@ -125,6 +127,12 @@ server {
         error_page 500 502 503 504 =200 /__dwd_empty_tile.gif;
         add_header Access-Control-Allow-Origin * always;
         add_header Cache-Control "public, max-age=60, stale-while-revalidate=120" always;
+    }
+    location = /__dwd_empty_tile.gif {
+        internal;
+        empty_gif;
+        add_header Content-Type image/gif always;
+        add_header Cache-Control "no-store" always;
     }
 
     # RainViewer API Proxy (same-origin Fetch)
