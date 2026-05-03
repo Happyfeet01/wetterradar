@@ -19,7 +19,8 @@ export const DWD_WMS_LAYER = 'dwd:Warnungen_Landkreise';
 export const DWD_WARN_JSON = '/dwd/warnings.json';
 export const DWD_WFS = 'https://maps.dwd.de/geoserver/dwd/ows?service=WFS&version=2.0.0&request=GetFeature&typeNames=dwd:Warnungen_Landkreise&outputFormat=application/json';
 
-// DWD Satellitendaten (WMS) – über same-origin Proxy, damit CSP/CORS sauber funktioniert.
-// Fallback direkt auf maps.dwd.de erfolgt in satellite.js, falls kein Proxy konfiguriert ist.
-export const DWD_SAT_WMS = '/dwd/sat/wms?';
+// DWD Satellitendaten (WMS): primär direkt von maps.dwd.de laden.
+// Hintergrund: wenn ein Reverse-Proxy (z. B. /dwd/sat/wms) Upstream-502 liefert,
+// bleiben Satellitenkacheln trotzdem verfügbar und der Layer fällt nicht aus.
+export const DWD_SAT_WMS = 'https://maps.dwd.de/geoserver/dwd/wms?';
 export const DWD_SAT_LAYER = 'dwd:SAT_WELT_KOMPOSIT';
