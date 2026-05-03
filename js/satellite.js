@@ -2,6 +2,7 @@
 import { DWD_SAT_WMS, DWD_SAT_LAYER } from './config.js';
 
 const DWD_SAT_WMS_FALLBACK = 'https://maps.dwd.de/geoserver/dwd/wms?';
+const DWD_SAT_WMS_DIRECT = 'https://maps.dwd.de/geoserver/dwd/wms?';
 
 let layer = null;
 let usingFallbackHost = false;
@@ -23,11 +24,21 @@ function createLayer(L, url, opacity){
   });
 }
 
+function resolvePrimaryWmsUrl(){
+  // Falls eine ältere Konfiguration noch auf den lokalen Proxy zeigt
+  // (z. B. /dwd/sat/wms) und dieser nicht existiert (404), erzwingen wir
+  // direkt den DWD-Host als Primärquelle.
+  if (typeof DWD_SAT_WMS === 'string' && /^https?:\/\//i.test(DWD_SAT_WMS)){
+    return DWD_SAT_WMS;
+  }
+  return DWD_SAT_WMS_DIRECT;
+}
+
 export function toggle(L, map, on, opacity=0.7){
   if(on){
     if(layer) map.removeLayer(layer);
     usingFallbackHost = false;
-    layer = createLayer(L, DWD_SAT_WMS, opacity).addTo(map);
+    layer = createLayer(L, resolvePrimaryWmsUrl(), opacity).addTo(map);
 
     // Wenn der same-origin Proxy ausfällt (z.B. 5xx vom Upstream),
     // wechsle automatisch auf den direkten DWD-Endpunkt.

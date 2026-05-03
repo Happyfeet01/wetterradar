@@ -77,7 +77,7 @@ systemctl enable --now wetterradar-noaa-wind.timer
 - Auf dem Server sollten Schreibrechte für den Fetcher auf `/var/www/wetterradar/wind/current.json` bestehen.
 - Die Beispiel-Nginx-Config (siehe `etc/nginx/sites-available/wetter.domain.tld`) enthält einen Location-Block für `/wind/`, der Caching + CORS-Header setzt.
 - RainViewer `weather-maps.json` wird serverseitig via Nginx unter `/rainviewer/weather-maps.json` auf `https://api.rainviewer.com/public/weather-maps.json` proxied, damit das Frontend sie same-origin laden kann.
-- Für den DWD-Satellitenlayer sollte `/dwd/sat/wms` auf `https://maps.dwd.de/geoserver/dwd/ows` zeigen (WMS über `request=GetMap`) und bei 5xx-Fehlern ein valides Bild (z. B. `empty_gif`) ausliefern, damit Tile-Rendering im Browser stabil bleibt.
+- Für den DWD-Satellitenlayer sollte `/dwd/sat/wms` auf `https://maps.dwd.de/geoserver/dwd/wms` zeigen und bei 5xx-Fehlern ein valides Bild (z. B. `empty_gif`) ausliefern, damit Tile-Rendering im Browser stabil bleibt.
 
 ## Lokale Entwicklung & Kurztest
 
