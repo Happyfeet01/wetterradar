@@ -54,7 +54,11 @@ const TTL_HOURS = (() => {
 })();
 
 // Open-Meteo: "time" wird in hourly.time immer automatisch geliefert und darf NICHT in hourly= stehen.
-const HOURLY_PARAMS = 'wind_speed_10m,wind_direction_10m';
+const WIND_VARIABLES = 'wind_speed_10m,wind_direction_10m';
+const REQUEST_MODE = (() => {
+  const value = String(process.env.WIND_OPENMETEO_REQUEST ?? 'current').toLowerCase();
+  return value === 'hourly' ? 'hourly' : 'current';
+})();
 const MIN_TIMEOUT_MS = 90_000;
 const MAX_BATCH_SIZE = (() => {
   const value = Number(process.env.WIND_MAX_BATCH_SIZE ?? 10);
@@ -159,6 +163,10 @@ function toVector(speed, directionDeg) {
 
 function isEmptyApiResponseError(err) {
   return err?.message?.includes('Leere API-Antwort erhalten') || err?.status === 204;
+}
+
+function isRetryableApiError(err) {
+  return err?.status === 429 || err?.code === 'RATE_LIMIT' || (err?.status >= 500 && err?.status <= 599);
 }
 
 async function ensureOutputDir(dirPath) {
@@ -316,8 +324,15 @@ async function fetchBatch(batchPoints) {
   const url = new URL(API_URL);
   url.searchParams.set('latitude', batchPoints.map((p) => p.lat).join(','));
   url.searchParams.set('longitude', batchPoints.map((p) => p.lon).join(','));
-  url.searchParams.set('hourly', HOURLY_PARAMS);
-  url.searchParams.set('forecast_hours', '1');
+  if (REQUEST_MODE === 'hourly') {
+    url.searchParams.set('hourly', WIND_VARIABLES);
+    url.searchParams.set('forecast_hours', '1');
+  } else {
+    // Open-Meteo's hourly endpoint currently tends to time out for many tiny multi-location
+    // requests. The current block exposes the same 10 m wind variables with a much smaller
+    // response and is documented as available for every hourly variable.
+    url.searchParams.set('current', WIND_VARIABLES);
+  }
   url.searchParams.set('timezone', 'GMT');
   url.searchParams.set('wind_speed_unit', 'ms');
 
@@ -382,32 +397,22 @@ async function fetchBatch(batchPoints) {
         throw error;
       }
 
-      const firstTimes = data.find((item) => Array.isArray(item?.hourly?.time))?.hourly?.time;
-      if (!Array.isArray(firstTimes) || firstTimes.length === 0 || firstTimes[0] == null) {
-        await writeDebugInvalid();
-        const error = new Error('Antwort enthält keine Stundenzeiten (hourly.time fehlt)');
-        error.status = status;
-        throw error;
-      }
-
-      datasetTimeIso = toIsoString(firstTimes[0]);
-      if (!datasetTimeIso) {
-        throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
-      }
-
       speedSeries = new Array(batchPoints.length).fill(null);
       dirSeries = new Array(batchPoints.length).fill(null);
 
       for (let i = 0; i < data.length; i++) {
         const loc = data[i];
+        const current = loc?.current;
         const hourly = loc?.hourly;
-        const time0 = hourly?.time?.[0];
-        const speed0 = hourly?.wind_speed_10m?.[0];
-        const dir0 = hourly?.wind_direction_10m?.[0];
+        const time0 = current?.time ?? hourly?.time?.[0];
+        const speed0 = current?.wind_speed_10m ?? hourly?.wind_speed_10m?.[0];
+        const dir0 = current?.wind_direction_10m ?? hourly?.wind_direction_10m?.[0];
 
         if (time0 == null) {
           continue;
         }
+
+        datasetTimeIso = datasetTimeIso ?? toIsoString(time0);
 
         let targetIdx = Number.isFinite(Number(loc?.location_id)) ? Number(loc.location_id) : null;
 
@@ -429,46 +434,64 @@ async function fetchBatch(batchPoints) {
         if (!Number.isFinite(dirSeries[targetIdx])) {
           dirSeries[targetIdx] = Number.isFinite(dir0) ? dir0 : null;
         }
-        speedUnit = speedUnit ?? loc?.hourly_units?.wind_speed_10m;
+        speedUnit = speedUnit ?? loc?.current_units?.wind_speed_10m ?? loc?.hourly_units?.wind_speed_10m;
       }
-    } else {
-      const hourly = data.hourly ?? {};
-      const times = hourly.time;
-      const speeds = hourly.wind_speed_10m;
-      const directions = hourly.wind_direction_10m;
 
-      // Bei Multi-Location kann wind_speed_10m / wind_direction_10m 2D sein (Array< Array<number> >),
-      // daher NICHT gegen times.length vergleichen. Wir prüfen nur die Mindeststruktur.
-      const isInvalidResponse =
-        !hourly ||
-        !Array.isArray(times) || times.length === 0 ||
-        !Array.isArray(speeds) || speeds.length === 0 ||
-        !Array.isArray(directions) || directions.length === 0;
-
-      if (isInvalidResponse) {
+      if (!datasetTimeIso) {
         await writeDebugInvalid();
-        const error = new Error('Antwort enthält keine Stundenzeiten');
+        const error = new Error('Antwort enthält keinen Wind-Zeitpunkt (current.time/hourly.time fehlt)');
         error.status = status;
         throw error;
       }
+    } else {
+      const current = data.current;
+      if (current?.time != null) {
+        datasetTimeIso = toIsoString(current.time);
+        if (!datasetTimeIso) {
+          throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
+        }
+        speedSeries = [current.wind_speed_10m];
+        dirSeries = [current.wind_direction_10m];
+        speedUnit = data.current_units?.wind_speed_10m;
+      } else {
+        const hourly = data.hourly ?? {};
+        const times = hourly.time;
+        const speeds = hourly.wind_speed_10m;
+        const directions = hourly.wind_direction_10m;
 
-      datasetTimeIso = toIsoString(times[0]);
-      if (!datasetTimeIso) {
-        throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
+        // Bei Multi-Location kann wind_speed_10m / wind_direction_10m 2D sein (Array< Array<number> >),
+        // daher NICHT gegen times.length vergleichen. Wir prüfen nur die Mindeststruktur.
+        const isInvalidResponse =
+          !hourly ||
+          !Array.isArray(times) || times.length === 0 ||
+          !Array.isArray(speeds) || speeds.length === 0 ||
+          !Array.isArray(directions) || directions.length === 0;
+
+        if (isInvalidResponse) {
+          await writeDebugInvalid();
+          const error = new Error('Antwort enthält keine Stundenzeiten');
+          error.status = status;
+          throw error;
+        }
+
+        datasetTimeIso = toIsoString(times[0]);
+        if (!datasetTimeIso) {
+          throw new Error('Antwortzeitpunkt konnte nicht geparst werden');
+        }
+
+        const locationCount = batchPoints.length;
+
+        try {
+          speedSeries = extractLocationLayer(hourly.wind_speed_10m, times.length, locationCount, 'wind_speed_10m');
+          dirSeries = extractLocationLayer(hourly.wind_direction_10m, times.length, locationCount, 'wind_direction_10m');
+        } catch (e) {
+          // Falls Struktur doch anders ist: Debug schreiben, damit wir echte Payload sehen.
+          await writeInvalidResponseDebug({ url: url.toString(), status, contentType, json: data });
+          throw e;
+        }
+
+        speedUnit = data.hourly_units?.wind_speed_10m;
       }
-
-      const locationCount = batchPoints.length;
-
-      try {
-        speedSeries = extractLocationLayer(hourly.wind_speed_10m, times.length, locationCount, 'wind_speed_10m');
-        dirSeries = extractLocationLayer(hourly.wind_direction_10m, times.length, locationCount, 'wind_direction_10m');
-      } catch (e) {
-        // Falls Struktur doch anders ist: Debug schreiben, damit wir echte Payload sehen.
-        await writeInvalidResponseDebug({ url: url.toString(), status, contentType, json: data });
-        throw e;
-      }
-
-      speedUnit = data.hourly_units?.wind_speed_10m;
     }
 
     const vectors = batchPoints.map((point, idx) => {
@@ -487,12 +510,12 @@ async function fetchBatch(batchPoints) {
     try {
       return await attemptFetch();
     } catch (err) {
-      if (err?.status === 429 || err?.code === 'RATE_LIMIT') {
+      if (isRetryableApiError(err)) {
         if (attempt >= MAX_RETRIES) {
           throw err;
         }
         const waitMs = BACKOFF_MS * (attempt + 1);
-        console.warn(`[wind] 429 erhalten, warte ${waitMs} ms vor erneutem Versuch ${attempt + 1}`);
+        console.warn(`[wind] Open-Meteo ${err?.status ?? err?.code} erhalten, warte ${waitMs} ms vor erneutem Versuch ${attempt + 1}`);
         await sleep(waitMs);
         continue;
       }
@@ -509,7 +532,7 @@ async function fetchWindField() {
   let datasetTime = null;
 
   const batches = chunkArray(grid.points, MAX_BATCH_SIZE);
-  console.log(`[wind] Rufe ${total} Punkte in ${batches.length} Batches ab (Größe ${MAX_BATCH_SIZE}).`);
+  console.log(`[wind] Rufe ${total} Punkte in ${batches.length} Batches ab (Größe ${MAX_BATCH_SIZE}, Modus ${REQUEST_MODE}).`);
 
   for (const batch of batches) {
     try {
