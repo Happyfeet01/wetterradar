@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "node --test js/windflow.test.js",
+    "test": "node --test js/*.test.js",
     "wind:once": "node wind-fetcher.js --once",
     "wind:watch": "node wind-fetcher.js"
   },
