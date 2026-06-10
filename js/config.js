@@ -19,8 +19,13 @@ export const DWD_WMS_LAYER = 'dwd:Warnungen_Landkreise';
 export const DWD_WARN_JSON = '/dwd/warnings.json';
 export const DWD_WFS = 'https://maps.dwd.de/geoserver/dwd/ows?service=WFS&version=2.0.0&request=GetFeature&typeNames=dwd:Warnungen_Landkreise&outputFormat=application/json';
 
-// DWD Satellitendaten (WMS): primär direkt von maps.dwd.de laden.
-// Hintergrund: wenn ein Reverse-Proxy (z. B. /dwd/sat/wms) Upstream-502 liefert,
-// bleiben Satellitenkacheln trotzdem verfügbar und der Layer fällt nicht aus.
-export const DWD_SAT_WMS = 'https://maps.dwd.de/geoserver/dwd/wms?';
-export const DWD_SAT_LAYER = 'dwd:SAT_WELT_KOMPOSIT';
+// DWD Satellitenbilder (WMS): lokaler Proxy zuerst, danach direkte DWD-Hosts.
+// Der Browser-Layer nutzt den DWD-GeoServer als Darstellungsdienst; die
+// Open-Data-Verzeichnisse unter opendata.dwd.de enthalten dazu ergänzend
+// Rohprodukte wie NetCDF-Dateien, aber keine direkt nutzbaren Leaflet-Kacheln.
+export const DWD_SAT_WMS = '/dwd/sat/wms?';
+export const DWD_SAT_WMS_FALLBACKS = [
+  'https://maps.dwd.de/geoserver/wms?',
+  'https://brz-maps.dwd.de/geoserver/wms?',
+];
+export const DWD_SAT_LAYER = 'dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h';

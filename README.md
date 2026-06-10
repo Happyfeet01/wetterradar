@@ -1,6 +1,6 @@
 # Wetterradar (Leaflet + RainViewer + NOAA GFS + DWD)
 
-Interaktive Wetterkarte mit Radar- und Satellitenanimation, Wind-Partikelfeld und DWD-Warngebieten (CAP-Polygone). Leichtgewichtig mit Leaflet und Vanilla-JS.
+Interaktive Wetterkarte mit Radar, DWD/EUMETSAT-Satellitenbild, Wind-Partikelfeld und DWD-Warngebieten (CAP-Polygone). Leichtgewichtig mit Leaflet und Vanilla-JS.
 
 Nutzbar unter https://wetter.larsmueller.net
 
@@ -12,8 +12,8 @@ https://de.liberapay.com/Esmuellerthier/
 
 - **Niederschlagsradar (RainViewer)**
   *Vergangenheit + Nowcast* (kurzfristige Vorhersage), animiert über Time-Slider.
-- **IR-Satellitenbilder (RainViewer)**
-  Synchronisiert zum Radar-Zeitpunkt; ein-/ausblendbar, Opazität regelbar.
+- **Satellitenbild (DWD/EUMETSAT)**
+  Aktuelles Meteosat-Europabild aus dem DWD-GeoServer (`dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h`); ein-/ausblendbar, Opazität regelbar. Der lokale Proxy `/dwd/sat/wms` wird zuerst genutzt, danach direkte DWD-Fallbacks.
 - **Wind-Partikelfeld (leaflet-velocity)**
   Vektorfeld aus **NOAA/NCEP GFS 1.0° (10 m Wind)** via NOMADS-Filter, als animierte Partikel (east/north-Komponenten).
 - **DWD-Warnungen**
@@ -23,11 +23,12 @@ https://de.liberapay.com/Esmuellerthier/
 
 ## Datenquellen
 
-- **RainViewer Weather Maps API** – Radar/Satellit (Tiles + Frames)
+- **RainViewer Weather Maps API** – Niederschlagsradar (Tiles + Frames)
+- **DWD/EUMETSAT Satellit** – Meteosat-Europabild per DWD-WMS; Open-Data-Rohprodukte liegen ergänzend unter `https://opendata.dwd.de/weather/satellite/`
 - **NOAA/NCEP GFS via NOMADS** – Windgeschwindigkeit/-richtung (10 m)
 - **DWD CAP/JSON** – amtliche Warnungen (Polygone + Metadaten)
 
-> Hinweis zu Limits (Stand 2025): RainViewer Free begrenzt Zoom (≤ 10) und Nowcast-Dauer; IR-Satellit wird von RainViewer mittelfristig eingeschränkt. Prüfe ggf. die aktuellen Nutzungsbedingungen/Docs.
+> Hinweis zu Satellitendaten: Der Frontend-Layer nutzt den DWD-WMS als Bild-/Darstellungsdienst. Die Open-Data-Verzeichnisse (`/weather/satellite/clouds/`, `/weather/satellite/radiation/`) stellen Rohprodukte wie komprimierte NetCDF-Dateien bereit und sind eher für serverseitige Verarbeitung geeignet. Bei Weiterverarbeitung bitte die Quellenangabe „EUMETSAT / DWD“ bzw. „Datenbasis: Deutscher Wetterdienst (DWD)“ beibehalten.
 
 ## Verzeichnis­struktur
 
@@ -37,7 +38,7 @@ https://de.liberapay.com/Esmuellerthier/
 │ ├─ app.js # Bootstrapping, Konfiguration, Wiring der Module
 │ ├─ map.js # Leaflet-Karte (OSM)
 │ ├─ radar.js # RainViewer Radar + Animation/Timeline
-│ ├─ clouds.js # IR-Satellit (RainViewer), Zeitsync + Throttle
+│ ├─ satellite.js # DWD/EUMETSAT-Satellitenbild per WMS + Fallbacks
 │ ├─ wind_particles.js # leaflet-velocity + NOAA-GFS-Sampling
 │ ├─ warnings.js # DWD JSON-Liste + CAP-Polygone als Overlays
 │ └─ utils.js # Helfer (Fetch/Proxy, DOM, Formatierungen, Legend)
@@ -77,7 +78,7 @@ systemctl enable --now wetterradar-noaa-wind.timer
 - Auf dem Server sollten Schreibrechte für den Fetcher auf `/var/www/wetterradar/wind/current.json` bestehen.
 - Die Beispiel-Nginx-Config (siehe `etc/nginx/sites-available/wetter.domain.tld`) enthält einen Location-Block für `/wind/`, der Caching + CORS-Header setzt.
 - RainViewer `weather-maps.json` wird serverseitig via Nginx unter `/rainviewer/weather-maps.json` auf `https://api.rainviewer.com/public/weather-maps.json` proxied, damit das Frontend sie same-origin laden kann.
-- Für den DWD-Satellitenlayer sollte `/dwd/sat/wms` auf `https://maps.dwd.de/geoserver/dwd/wms` zeigen und bei 5xx-Fehlern ein valides Bild (z. B. `empty_gif`) ausliefern, damit Tile-Rendering im Browser stabil bleibt.
+- Für den DWD-Satellitenlayer sollte `/dwd/sat/wms` auf `https://maps.dwd.de/geoserver/wms` zeigen und bei 5xx-Fehlern ein valides Bild (z. B. `empty_gif`) ausliefern, damit Tile-Rendering im Browser stabil bleibt. Falls der Proxy nicht verfügbar ist, fällt das Frontend automatisch auf `maps.dwd.de` und `brz-maps.dwd.de` zurück.
 
 ## Lokale Entwicklung & Kurztest
 
