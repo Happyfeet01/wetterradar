@@ -13,7 +13,7 @@ https://de.liberapay.com/Esmuellerthier/
 - **Niederschlagsradar (RainViewer)**
   *Vergangenheit + Nowcast* (kurzfristige Vorhersage), animiert über Time-Slider.
 - **Satellitenbild (DWD/EUMETSAT)**
-  Aktuelles Meteosat-Europabild aus dem DWD-GeoServer (`dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h`); ein-/ausblendbar, Opazität regelbar. Das Frontend lädt zuerst den direkten DWD-GetMap-Endpunkt und nutzt den lokalen Proxy nur als letzten Fallback.
+  Aktuelles Meteosat-Europabild aus dem DWD-GeoServer (`dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h`); ein-/ausblendbar, Opazität regelbar. Der lokale Proxy `/dwd/sat/wms` wird zuerst genutzt, danach direkte DWD-Fallbacks.
 - **Wind-Partikelfeld (leaflet-velocity)**
   Vektorfeld aus **NOAA/NCEP GFS 1.0° (10 m Wind)** via NOMADS-Filter, als animierte Partikel (east/north-Komponenten).
 - **DWD-Warnungen**
@@ -78,7 +78,7 @@ systemctl enable --now wetterradar-noaa-wind.timer
 - Auf dem Server sollten Schreibrechte für den Fetcher auf `/var/www/wetterradar/wind/current.json` bestehen.
 - Die Beispiel-Nginx-Config (siehe `etc/nginx/sites-available/wetter.domain.tld`) enthält einen Location-Block für `/wind/`, der Caching + CORS-Header setzt.
 - RainViewer `weather-maps.json` wird serverseitig via Nginx unter `/rainviewer/weather-maps.json` auf `https://api.rainviewer.com/public/weather-maps.json` proxied, damit das Frontend sie same-origin laden kann.
-- Der DWD-Satellitenlayer lädt standardmäßig direkt von `https://maps.dwd.de/geoserver/dwd/ows`. `/dwd/sat/wms` bleibt als optionaler Same-Origin-Fallback erhalten und sollte auf denselben DWD-OWS-Endpunkt zeigen. Wichtig: Wenn der Proxy bei Upstream-Fehlern ein leeres 1x1-Bild mit HTTP 200 liefert, kann der Browser diesen Fall nicht als Ladefehler erkennen; deshalb steht der Proxy nicht mehr an erster Stelle.
+- Für den DWD-Satellitenlayer sollte `/dwd/sat/wms` auf `https://maps.dwd.de/geoserver/wms` zeigen und bei 5xx-Fehlern ein valides Bild (z. B. `empty_gif`) ausliefern, damit Tile-Rendering im Browser stabil bleibt. Falls der Proxy nicht verfügbar ist, fällt das Frontend automatisch auf `maps.dwd.de` und `brz-maps.dwd.de` zurück.
 
 ## Lokale Entwicklung & Kurztest
 

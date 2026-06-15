@@ -103,7 +103,7 @@ server {
 
     # DWD Satellit WMS Proxy (same-origin Fallback)
     # Hinweis:
-    # - DWD Satellit über den nativen WMS-Endpunkt /geoserver/dwd/ows
+    # - DWD Satellit über den nativen WMS-Endpunkt /geoserver/wms
     # - Query-String wird 1:1 weitergereicht
     # - bei Upstream-Fehlern liefern wir ein valides 1x1 GIF zurück
     location = /dwd/sat/wms {
