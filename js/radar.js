@@ -47,7 +47,7 @@ function radarUrl(frame, ui){
   // RainViewer Free-Tier: nur noch Farbschema 8 (Universal Blue) verfügbar
   const color = 8;
   const smooth = ui.chkSmooth.checked ? 1 : 0;
-  const snow = ui?.chkPrecipType?.checked ? 1 : 0;
+  const snow = 0;
   const host=(RV_HOST||RV_HOST_FALLBACK).replace(/\/+$/,'');
   let path=String(frame.path||'').replace(/^\/+/,'');
   if (!path.startsWith('v2/')) path = 'v2/radar/' + path;

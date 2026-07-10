@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { DWD_SAT_BOUNDS, DWD_SAT_IMAGE, DWD_SAT_LAYER, DWD_SAT_WMS, DWD_SAT_WMS_FALLBACKS } from './config.js';
 import { __test } from './satellite.js';
 
-const { buildEndpointList, buildGetMapUrl, getImageConfig, normalizeWmsUrl } = __test;
+const { buildEndpointList, buildFallbackHourlyFrames, buildGetCapabilitiesUrl, buildGetMapUrl, expandTimeList, getImageConfig, normalizeWmsUrl, parseIsoPeriodMs, parseSatelliteTimes } = __test;
 
 describe('DWD satellite WMS configuration', () => {
   it('uses the current DWD Meteosat Europe RGB/IR layer', () => {
@@ -26,8 +26,8 @@ describe('DWD satellite WMS configuration', () => {
     assert.equal(normalizeWmsUrl(''), null);
   });
 
-  it('builds a fixed EPSG:4326 GetMap URL for the Europe image overlay', () => {
-    const url = buildGetMapUrl(DWD_SAT_WMS, 12345);
+  it('builds a fixed EPSG:4326 GetMap URL for a timed Europe image overlay', () => {
+    const url = buildGetMapUrl(DWD_SAT_WMS, 12345, '2026-07-10T09:00:00.000Z');
     const parsed = new URL(url);
 
     assert.equal(parsed.origin + parsed.pathname + '?', DWD_SAT_WMS);
@@ -40,6 +40,46 @@ describe('DWD satellite WMS configuration', () => {
     assert.equal(parsed.searchParams.get('width'), String(DWD_SAT_IMAGE.width));
     assert.equal(parsed.searchParams.get('height'), String(DWD_SAT_IMAGE.height));
     assert.equal(parsed.searchParams.get('_t'), '12345');
+    assert.equal(parsed.searchParams.get('time'), '2026-07-10T09:00:00.000Z');
+  });
+
+  it('builds a GetCapabilities URL for WMS time discovery', () => {
+    const parsed = new URL(buildGetCapabilitiesUrl(DWD_SAT_WMS));
+
+    assert.equal(parsed.origin + parsed.pathname + '?', DWD_SAT_WMS);
+    assert.equal(parsed.searchParams.get('service'), 'WMS');
+    assert.equal(parsed.searchParams.get('version'), '1.1.1');
+    assert.equal(parsed.searchParams.get('request'), 'GetCapabilities');
+  });
+
+  it('expands WMS time lists and ISO-8601 intervals', () => {
+    assert.equal(parseIsoPeriodMs('PT1H'), 60 * 60 * 1000);
+    assert.deepEqual(expandTimeList('2026-07-10T00:00:00Z/2026-07-10T02:00:00Z/PT1H'), [
+      '2026-07-10T00:00:00.000Z',
+      '2026-07-10T01:00:00.000Z',
+      '2026-07-10T02:00:00.000Z',
+    ]);
+  });
+
+  it('parses satellite layer time dimensions from WMS capabilities XML', () => {
+    const xml = `<WMT_MS_Capabilities><Capability><Layer><Layer>
+      <Name>${DWD_SAT_LAYER}</Name>
+      <Extent name="time">2026-07-10T00:00:00Z/2026-07-10T02:00:00Z/PT1H</Extent>
+    </Layer></Layer></Capability></WMT_MS_Capabilities>`;
+
+    assert.deepEqual(parseSatelliteTimes(xml), [
+      '2026-07-10T00:00:00.000Z',
+      '2026-07-10T01:00:00.000Z',
+      '2026-07-10T02:00:00.000Z',
+    ]);
+  });
+
+  it('creates hourly fallback frames when WMS capabilities are unavailable', () => {
+    const frames = buildFallbackHourlyFrames(Date.parse('2026-07-10T02:34:00Z'));
+
+    assert.equal(frames.length, 24);
+    assert.equal(frames.at(-1).iso, '2026-07-10T02:00:00.000Z');
+    assert.equal(frames.at(-2).iso, '2026-07-10T01:00:00.000Z');
   });
 
   it('keeps the image overlay bounds in south-west/north-east Leaflet order', () => {
