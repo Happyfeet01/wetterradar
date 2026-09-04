@@ -19,15 +19,15 @@ export const DWD_WMS_LAYER = 'dwd:Warnungen_Landkreise';
 export const DWD_WARN_JSON = '/dwd/warnings.json';
 export const DWD_WFS = 'https://maps.dwd.de/geoserver/dwd/ows?service=WFS&version=2.0.0&request=GetFeature&typeNames=dwd:Warnungen_Landkreise&outputFormat=application/json';
 
-// DWD Satellitenbilder (WMS): direkte DWD-Hosts zuerst, lokaler Proxy nur als
-// letzter Fallback. Einige Proxy-Configs liefern bei Upstream-Fehlern ein leeres
-// 1x1-Bild mit HTTP 200; das wäre im Browser nicht als Fehler erkennbar.
-export const DWD_SAT_WMS = 'https://maps.dwd.de/geoserver/dwd/ows?';
-export const DWD_SAT_WMS_FALLBACKS = [
-  'https://maps.dwd.de/geoserver/wms?',
-  'https://brz-maps.dwd.de/geoserver/wms?',
-  '/dwd/sat/wms?',
+// Satellitenbilder: EUMETView (EUMETSAT) via Same-Origin-Proxy.
+// Der direkte Endpoint bleibt als Fallback für Deployments ohne den mitgelieferten
+// Nginx-vHost. GeoColour (MTG-I, 0°) liefert tagsüber natürliche Farben und
+// nachts eine IR-basierte Darstellung.
+export const EUMETVIEW_WMS = '/eumetview/wms?';
+export const EUMETVIEW_WMS_FALLBACKS = [
+  'https://view.eumetsat.int/geoserver/wms?',
 ];
-export const DWD_SAT_LAYER = 'dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h';
-export const DWD_SAT_BOUNDS = [[22.99844049, -53.99411012], [76.99256049, 54.00310988]];
-export const DWD_SAT_IMAGE = { width: 1024, height: 574 };
+export const EUMETVIEW_SAT_LAYER = 'mtg_fd:rgb_geocolour';
+// Leaflet-Bounds [south, west] / [north, east], Europa-Ausschnitt.
+export const EUMETVIEW_SAT_BOUNDS = [[30, -13], [65, 40]];
+export const EUMETVIEW_SAT_IMAGE = { width: 1200, height: 800 };
