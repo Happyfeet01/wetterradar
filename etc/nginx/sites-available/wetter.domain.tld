@@ -17,7 +17,6 @@ server {
 
     root /var/www/wetterradar;
     index index.html;
-     
 
     # --- Zertifikate (werden nach certbot-Befehl gesetzt/aktualisiert) ---
     ssl_certificate     /etc/letsencrypt/live/wetter.domain.tld/fullchain.pem;
@@ -29,16 +28,15 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # Content Security Policy: erlaub Leaflet + OSM + RainViewer + unpkg
-    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: https://tilecache.rainviewer.com https://*.tile.openstreetmap.org https://maps.dwd.de; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://api.open-meteo.com https://nominatim.openstreetmap.org https://maps.dwd.de; font-src 'self' data:; child-src 'none'; frame-ancestors 'self';" always;
+    # Content Security Policy: Leaflet + OSM + RainViewer + EUMETView + unpkg
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: https://tilecache.rainviewer.com https://*.tile.openstreetmap.org https://maps.dwd.de https://view.eumetsat.int; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://api.open-meteo.com https://nominatim.openstreetmap.org https://maps.dwd.de https://view.eumetsat.int; font-src 'self' data:; child-src 'none'; frame-ancestors 'self';" always;
+
     # --- Gzip für Text ---
     gzip on;
     gzip_comp_level 5;
     gzip_types text/plain text/css application/javascript application/json image/svg+xml;
 
-
     # --- DWD Warnungen ---
-
     location = /dwd/warnings.json {
       proxy_pass https://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json;
       proxy_set_header Host www.dwd.de;
@@ -57,7 +55,7 @@ server {
       add_header Access-Control-Allow-Origin *;
     }
 
-        # --- NINA / KATWARN (MOWAS) Warnungen (same-origin Proxy) ---
+    # --- NINA / KATWARN (MOWAS) Warnungen (same-origin Proxy) ---
     location ^~ /nina/ {
         # NINA (MOWAS) läuft über warnung.bund.de
         # Wir hängen /nina/ vorne dran, damit dein Frontend nur same-origin macht.
@@ -72,7 +70,6 @@ server {
         # optional: falls die API gzip liefert und du Ärger hast
         # proxy_set_header Accept-Encoding "";
     }
-
 
     # --- Caching ---
     location = /index.html {
@@ -100,15 +97,37 @@ server {
         try_files $uri =404;
     }
 
+    # --- EUMETView Satellit WMS (same-origin, lazy im Frontend) ---
+    location = /eumetview/wms {
+        proxy_pass https://view.eumetsat.int/geoserver/wms?$args;
+        proxy_set_header Host view.eumetsat.int;
+        proxy_ssl_server_name on;
+        proxy_ssl_name view.eumetsat.int;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
 
-    # DWD Satellit WMS Proxy (same-origin Fallback)
-    # Hinweis:
-    # - DWD Satellit über den nativen WMS-Endpunkt /geoserver/wms
-    # - Query-String wird 1:1 weitergereicht
-    # - bei Upstream-Fehlern liefern wir ein valides 1x1 GIF zurück
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 12s;
+        proxy_send_timeout 12s;
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+        proxy_next_upstream_tries 2;
+
+        # GetCapabilities und identische GetMap-Aufrufe nicht für jeden Client
+        # erneut bei EUMETSAT abholen.
+        proxy_cache dwdcache;
+        proxy_cache_lock on;
+        proxy_cache_valid 200 5m;
+        proxy_cache_valid any 1m;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+
+        add_header Access-Control-Allow-Origin * always;
+        add_header Cache-Control "public, max-age=300, stale-while-revalidate=600" always;
+    }
+
+    # Alter DWD-Satellitenproxy bleibt vorerst als rückwärtskompatibler Fallback
+    # für bestehende Deployments/URLs erhalten, wird vom aktuellen Frontend aber
+    # nicht mehr verwendet.
     location = /dwd/sat/wms {
-        # Kein Variablenanteil im Upstream-Host, damit kein separater `resolver`
-        # erforderlich ist (sonst: "no resolver defined to resolve maps.dwd.de").
         proxy_pass https://maps.dwd.de/geoserver/dwd/ows?$args;
         proxy_set_header Host maps.dwd.de;
         proxy_ssl_server_name on;
@@ -143,6 +162,16 @@ server {
         proxy_connect_timeout 5s;
         proxy_read_timeout 10s;
         proxy_send_timeout 10s;
+
+        # RainViewer-Metadaten ändern sich nicht sekündlich. Ein kurzer Shared
+        # Cache reduziert Upstream-Requests deutlich, besonders bei mehreren
+        # gleichzeitigen Besuchern.
+        proxy_cache dwdcache;
+        proxy_cache_lock on;
+        proxy_cache_valid 200 5m;
+        proxy_cache_valid any 1m;
+        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        add_header Cache-Control "public, max-age=300, stale-while-revalidate=600" always;
     }
 
     # ACME-Challenge (für Certbot Webroot)
