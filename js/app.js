@@ -51,7 +51,9 @@ async function boot(){
   Radar.paint(L,map,ui,syncClouds);
 
   let playing=false, timer=null;
-  const stepMs=()=>Math.max(Number(ui.rngSpeed.value),PLAY_FADE_MS+80);
+  // Slider nach rechts = schneller. Der Range-Wert wird deshalb in eine
+  // Bildwechsel-Verzögerung umgerechnet (200..1200 -> 1200..200 ms).
+  const stepMs=()=>Math.max(1400-Number(ui.rngSpeed.value),PLAY_FADE_MS+80);
   const updateSpeedLabel=()=>{
     if(!ui.lblSpeed) return;
     ui.lblSpeed.textContent=`${(stepMs()/1000).toLocaleString('de-DE',{minimumFractionDigits:1,maximumFractionDigits:1})} s/Bild`;
