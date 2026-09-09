@@ -1,18 +1,14 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
-
-const execFileAsync = promisify(execFile);
+import grib2json from '@weacast/grib2json';
 
 const NOMADS_BASE = 'https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_1p00.pl';
 const CYCLES = ['18', '12', '06', '00'];
 const DATA_DIR = '/var/lib/wetterradar/noaa-wind';
 const WIND_DIR = '/var/www/wetterradar/wind';
 const GRIB_PATH = path.join(DATA_DIR, 'gfs.grib2');
-const GRIB2JSON_BIN = path.join(process.cwd(), 'node_modules', '.bin', 'grib2json');
+const DEFAULT_JAVA_HOME = '/usr/lib/jvm/default-java';
 
 function log(message) {
   console.log(`[noaa-wind] ${message}`);
@@ -35,9 +31,6 @@ export function buildCandidates(now = new Date()) {
   const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
   const candidates = [];
 
-  // Für heute nur Zyklen probieren, deren nominelle UTC-Laufzeit bereits
-  // erreicht ist. Vorher wurde z. B. um 15 UTC bereits der 18z-Lauf
-  // angefragt, was bei NOMADS zwangsläufig mit 403/404 endet.
   const currentUtcHour = now.getUTCHours();
   for (const cycle of CYCLES) {
     if (Number(cycle) <= currentUtcHour) {
@@ -45,7 +38,6 @@ export function buildCandidates(now = new Date()) {
     }
   }
 
-  // Vom Vortag dürfen alle vier Läufe als Fallback versucht werden.
   for (const cycle of CYCLES) {
     candidates.push({ date: formatDateUtc(yesterday), cycle });
   }
@@ -56,10 +48,6 @@ export function buildCandidates(now = new Date()) {
 export function buildNomadsUrl(date, cycle) {
   const url = new URL(NOMADS_BASE);
   url.searchParams.set('dir', `/gfs.${date}/${cycle}/atmos`);
-
-  // Offizieller Dateiname des 1.00°-GFS lautet "1p00". Hier stand zuvor
-  // versehentlich "1p0"; dadurch wurde eine nicht existierende Datei
-  // angefordert und der NOMADS-Filter antwortete mit 500.
   url.searchParams.set('file', `gfs.t${cycle}z.pgrb2.1p00.f000`);
   url.searchParams.set('lev_10_m_above_ground', 'on');
   url.searchParams.set('var_UGRD', 'on');
@@ -79,9 +67,6 @@ export function validateGribBuffer(input, contentType = '') {
     throw new Error('Received HTML error page');
   }
 
-  // Die vorherige 200-KiB-Grenze war falsch: Ein von NOMADS auf nur UGRD/VGRD
-  // und 10 m gefiltertes 1°-GRIB kann deutlich kleiner sein (z. B. ~159 KiB).
-  // Deshalb prüfen wir die tatsächliche GRIB-Signatur statt einer geratenen Größe.
   if (buffer.length < 16) {
     throw new Error(`GRIB payload too small (${buffer.length} bytes)`);
   }
@@ -139,22 +124,31 @@ async function saveAtomic(filePath, buffer) {
   await fs.rename(tmpPath, filePath);
 }
 
-async function convertGribToJson(gribPath) {
-  const outputPath = path.join(tmpdir(), `grib-${Date.now()}.json`);
-  try {
-    await execFileAsync(GRIB2JSON_BIN, ['--compact', '--data', '--output', outputPath, gribPath]);
-  } catch (error) {
-    throw new Error(`grib2json failed (${error.code || 'unknown'}): ${error.message}`);
-  }
+async function ensureJavaHome() {
+  if (process.env.JAVA_HOME) return process.env.JAVA_HOME;
 
-  const content = await fs.readFile(outputPath, 'utf8');
+  try {
+    await fs.access(path.join(DEFAULT_JAVA_HOME, 'bin', 'java'));
+    process.env.JAVA_HOME = DEFAULT_JAVA_HOME;
+    log(`JAVA_HOME automatisch gesetzt auf ${DEFAULT_JAVA_HOME}`);
+    return DEFAULT_JAVA_HOME;
+  } catch {
+    throw new Error('JAVA_HOME ist nicht gesetzt und /usr/lib/jvm/default-java/bin/java wurde nicht gefunden. Installiere default-jre-headless.');
+  }
+}
+
+async function convertGribToJson(gribPath) {
+  await ensureJavaHome();
+
   let parsed;
   try {
-    parsed = JSON.parse(content);
+    parsed = await grib2json(gribPath, {
+      compact: true,
+      data: true,
+      bufferSize: 64 * 1024 * 1024
+    });
   } catch (error) {
-    throw new Error(`Invalid JSON from grib2json: ${error.message}`);
-  } finally {
-    await fs.rm(outputPath, { force: true }).catch(() => {});
+    throw new Error(`grib2json failed (${error.code || 'unknown'}): ${error.message}`);
   }
 
   if (!Array.isArray(parsed) || parsed.length < 2) {

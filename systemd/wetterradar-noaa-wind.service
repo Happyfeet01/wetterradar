@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 User=www-data
 WorkingDirectory=/var/www/wetterradar
+Environment=JAVA_HOME=/usr/lib/jvm/default-java
 ExecStart=/usr/bin/node /var/www/wetterradar/tools/noaa-wind-fetcher.js
 ReadWritePaths=/var/lib/wetterradar/noaa-wind /var/www/wetterradar/wind
 ProtectSystem=strict

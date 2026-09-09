@@ -14,9 +14,9 @@
   "description": "",
   "dependencies": {
     "@simonschick/blitzortungapi": "^4.0.1",
+    "@weacast/grib2json": "^2.3.3",
     "cors": "^2.8.5",
-    "express": "^5.1.0",
-    "@weacast/grib2json": "^1.1.1"
+    "express": "^5.1.0"
   },
   "type": "module"
 }
