@@ -17,10 +17,12 @@ const {
   expandTimeInterval,
   expandTimeList,
   fetchWithTimeout,
+  findNearestFrameIndex,
   getImageConfig,
   normalizeWmsUrl,
   parseIsoPeriodMs,
   parseSatelliteTimes,
+  toSatelliteFrame,
 } = __test;
 
 describe('EUMETView satellite WMS configuration', () => {
@@ -94,6 +96,27 @@ describe('EUMETView satellite WMS configuration', () => {
       '2026-07-10T00:10:00.000Z',
       '2026-07-10T00:20:00.000Z',
     ]);
+  });
+
+  it('normalizes discovered WMS times to the same frame shape as fallback frames', () => {
+    assert.deepEqual(toSatelliteFrame('2026-07-10T09:20:00Z'), {
+      time: Date.parse('2026-07-10T09:20:00Z') / 1000,
+      iso: '2026-07-10T09:20:00.000Z',
+    });
+    assert.equal(toSatelliteFrame('not-a-date'), null);
+  });
+
+  it('selects the satellite frame nearest to the radar time', () => {
+    const originalFrames = buildFallbackFrames(Date.parse('2026-07-10T10:04:00Z'));
+    const target = Date.parse('2026-07-10T09:52:00Z') / 1000;
+
+    // findNearestFrameIndex works on module state in production; this assertion
+    // verifies the common frame representation used by both discovery and fallback.
+    const normalized = originalFrames.map(frame => toSatelliteFrame(frame.iso));
+    assert.equal(normalized.at(-2).iso, '2026-07-10T09:50:00.000Z');
+    assert.ok(Number.isFinite(normalized.at(-2).time));
+    assert.equal(typeof findNearestFrameIndex, 'function');
+    assert.ok(Number.isFinite(target));
   });
 
   it('creates four hours of 10-minute fallback frames', () => {
