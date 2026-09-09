@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCandidates, buildNomadsUrl } from '../tools/noaa-wind-fetcher.js';
+import { buildCandidates, buildNomadsUrl, validateGribBuffer } from '../tools/noaa-wind-fetcher.js';
 
 test('NOAA GFS 1 degree filename uses official 1p00 spelling', () => {
   const url = new URL(buildNomadsUrl('20260909', '06'));
@@ -21,4 +21,15 @@ test('candidate list does not query future GFS cycles', () => {
 test('18z becomes eligible after 18 UTC', () => {
   const candidates = buildCandidates(new Date('2026-09-09T18:01:00Z'));
   assert.deepEqual(candidates[0], { date: '20260909', cycle: '18' });
+});
+
+test('filtered GRIB payload may be smaller than 200 KiB', () => {
+  const payload = Buffer.alloc(159205);
+  payload.write('GRIB', 0, 'ascii');
+  assert.equal(validateGribBuffer(payload).length, 159205);
+});
+
+test('GRIB validation rejects HTML and non-GRIB payloads', () => {
+  assert.throws(() => validateGribBuffer(Buffer.from('<html>oops</html>'), 'text/html'), /HTML error page/);
+  assert.throws(() => validateGribBuffer(Buffer.alloc(128, 1)), /Unexpected payload signature/);
 });

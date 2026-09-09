@@ -71,6 +71,29 @@ export function buildNomadsUrl(date, cycle) {
   return url.toString();
 }
 
+export function validateGribBuffer(input, contentType = '') {
+  const buffer = Buffer.isBuffer(input) ? input : Buffer.from(input ?? []);
+  const prefixText = buffer.slice(0, 20).toString('utf8').trim().toLowerCase();
+
+  if (String(contentType).toLowerCase().includes('text/html') || prefixText.startsWith('<!doctype') || prefixText.startsWith('<html')) {
+    throw new Error('Received HTML error page');
+  }
+
+  // Die vorherige 200-KiB-Grenze war falsch: Ein von NOMADS auf nur UGRD/VGRD
+  // und 10 m gefiltertes 1°-GRIB kann deutlich kleiner sein (z. B. ~159 KiB).
+  // Deshalb prüfen wir die tatsächliche GRIB-Signatur statt einer geratenen Größe.
+  if (buffer.length < 16) {
+    throw new Error(`GRIB payload too small (${buffer.length} bytes)`);
+  }
+
+  const magic = buffer.subarray(0, 4).toString('ascii');
+  if (magic !== 'GRIB') {
+    throw new Error(`Unexpected payload signature ${JSON.stringify(magic)}`);
+  }
+
+  return buffer;
+}
+
 async function fetchBuffer(url) {
   log(`Fetching GRIB2 from ${url}`);
   const response = await fetch(url, {
@@ -85,18 +108,8 @@ async function fetchBuffer(url) {
 
   const contentType = response.headers.get('content-type') || '';
   const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  const prefix = buffer.slice(0, 20).toString('utf8').trim().toLowerCase();
-
-  if (contentType.includes('text/html') || prefix.startsWith('<!doctype') || prefix.startsWith('<html')) {
-    throw new Error('Received HTML error page');
-  }
-
-  if (buffer.length <= 200 * 1024) {
-    throw new Error(`File too small (${buffer.length} bytes)`);
-  }
-
+  const buffer = validateGribBuffer(Buffer.from(arrayBuffer), contentType);
+  log(`Accepted GRIB2 payload (${buffer.length} bytes)`);
   return buffer;
 }
 
