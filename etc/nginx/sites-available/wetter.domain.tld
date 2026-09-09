@@ -127,7 +127,10 @@ server {
 
     # --- EUMETView Satellit WMS (same-origin, lazy im Frontend) ---
     location = /eumetview/wms {
-        proxy_pass https://view.eumetsat.int/geoserver/wms?$args;
+        # Query-String wird von nginx automatisch weitergereicht. Kein $args in
+        # proxy_pass: Variablen erzwingen Laufzeit-DNS und benötigen sonst einen
+        # expliziten resolver, was hier als 502 endete.
+        proxy_pass https://view.eumetsat.int/geoserver/wms;
         proxy_set_header Host view.eumetsat.int;
         proxy_ssl_server_name on;
         proxy_ssl_name view.eumetsat.int;
