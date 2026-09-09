@@ -1,6 +1,6 @@
 import { OSM_ATTRIB, OSM_DARK_ATTRIB, OSM_DARK_URL, OSM_URL, PLAY_FADE_MS } from './config.js';
 import * as Radar from './radar.js';
-import * as Sat from './satellite.js';
+import * as Sat from './satellite.js?v=20260909-1';
 import { bind as bindWarnings } from './warnings.js';
 import { bindWindFlow } from './windflow.js';
 import { bindTemperature } from './temperature.js';
