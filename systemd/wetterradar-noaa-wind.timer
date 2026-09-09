@@ -2,8 +2,12 @@
 Description=Wetterradar NOAA wind fetcher timer
 
 [Timer]
-OnCalendar=*-*-* 00,06,12,18:20:00
-RandomizedDelaySec=1800
+# GFS-Läufe starten um 00/06/12/18 UTC. Der FH000-Datensatz steht nicht schon
+# zur nominellen Laufzeit bereit, deshalb prüfen wir einige Stunden später.
+# Ein zweiter Lauf eine Stunde danach fängt verzögerte NOMADS-Veröffentlichungen ab.
+OnCalendar=*-*-* 04,10,16,22:00:00 UTC
+OnCalendar=*-*-* 05,11,17,23:00:00 UTC
+RandomizedDelaySec=600
 Persistent=true
 
 [Install]
