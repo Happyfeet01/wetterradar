@@ -46,16 +46,19 @@ if(ui.btnPanelToggle && ui.controlPanel){
 function syncClouds(timeUnix){ Sat.syncTo(timeUnix); }
 
 async function boot(){
-  await Radar.loadRadar(); await Sat.loadSatellite(); Radar.paint(L,map,ui,syncClouds);
+  await Radar.loadRadar();
+  await Sat.loadSatellite();
+  Radar.paint(L,map,ui,syncClouds);
+
   let playing=false, timer=null;
   const stepMs=()=>Math.max(Number(ui.rngSpeed.value),PLAY_FADE_MS+80);
   ui.btnPrev.onclick=()=>{Radar.step(-1);Radar.paint(L,map,ui,syncClouds);};
   ui.btnNext.onclick=()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);};
   ui.btnPlay.onclick=()=>{ playing=!playing; ui.btnPlay.textContent=playing?'⏸':'▶︎'; if(playing) timer=setInterval(()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);},stepMs()); else clearInterval(timer); };
   ui.rngSpeed.oninput=()=>{if(playing){clearInterval(timer);timer=setInterval(()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);},stepMs());}};
-  ui.rngOpacity.oninput=()=>{ui.lblOpacity.textContent=Math.round(Number(ui.rngOpacity.value)*100)+'%';};
+  ui.rngOpacity.oninput=()=>{const opacity=Number(ui.rngOpacity.value);ui.lblOpacity.textContent=Math.round(opacity*100)+'%';Radar.setOpacity(opacity);};
   ui.selColor.onchange=()=>Radar.paint(L,map,ui,syncClouds); ui.chkSmooth.onchange=()=>Radar.paint(L,map,ui,syncClouds);
-  ui.chkClouds.onchange=()=>Sat.toggle(L,map,ui.chkClouds.checked,Number(ui.rngClouds.value));
+  ui.chkClouds.onchange=()=>{void Sat.toggle(L,map,ui.chkClouds.checked,Number(ui.rngClouds.value));};
   ui.rngClouds.oninput=()=>{ui.lblClouds.textContent=Math.round(Number(ui.rngClouds.value)*100)+'%';Sat.setOpacity(Number(ui.rngClouds.value));};
   ui.chkDark.onchange=()=>applyDarkMode(ui.chkDark.checked); applyDarkMode(ui.chkDark.checked);
 
@@ -70,8 +73,21 @@ async function boot(){
   function updateWindTooltip(marker,info){if(!marker)return;if(!info){if(marker.getTooltip())marker.setTooltipContent('Winddaten nicht verfügbar');else marker.bindTooltip('Winddaten nicht verfügbar',locationTooltipOptions);return;}const d=Number.isFinite(info.direction)?`${Math.round(info.direction)}°`:'–';const k=Number.isFinite(info.speedKmh)?info.speedKmh.toFixed(1):'–';const m=Number.isFinite(info.speedMs)?info.speedMs.toFixed(1):'–';const content=`Wind: ${k} km/h (${m} m/s)<br>Richtung: ${d}`;if(marker.getTooltip())marker.setTooltipContent(content);else marker.bindTooltip(content,locationTooltipOptions);}
   ui.btnLocate.onclick=()=>{if(!navigator.geolocation){showWindError('Standortbestimmung nicht unterstützt');alert('Geolokalisierung wird von diesem Browser nicht unterstützt.');return;}ui.btnLocate.disabled=true;showWindLoading();navigator.geolocation.getCurrentPosition(async pos=>{const{latitude,longitude,accuracy}=pos.coords;const zoom=accuracy<=50?14:accuracy<=150?12:accuracy<=1000?10:9;map.setView([latitude,longitude],Math.min(zoom,map.getMaxZoom()));updateAccuracyCircle(latitude,longitude,accuracy);const marker=updateLocationMarker(latitude,longitude,null);try{const wind=await fetchWindInfo(latitude,longitude);updateLocationMarker(latitude,longitude,wind.direction??null);updateWindTooltip(marker,wind);showWindInfo(wind);}catch(err){console.warn('Winddaten konnten nicht geladen werden:',err);updateWindTooltip(marker,null);showWindError();}finally{ui.btnLocate.disabled=false;}},err=>{console.warn('Geolokalisierung fehlgeschlagen:',err);ui.btnLocate.disabled=false;showWindError('Standort nicht verfügbar');},{enableHighAccuracy:true,maximumAge:120000,timeout:15000});};
 
-  Radar.paint(L,map,ui,syncClouds); const marker=document.getElementById('currentTimeMarker');
-  if(marker){const now=Date.now()/1000;const frames=Radar.getFrames();const currentFrame=frames[Radar.getIndex()];if(currentFrame&&Math.abs(currentFrame.time-now)<60)marker.style.display='block';}
-  setInterval(async()=>{await Promise.all([Radar.loadRadar(),Sat.loadSatellite()]);const frames=Radar.getFrames();const current=frames[Radar.getIndex()];if(current)syncClouds(current.time);Radar.paint(L,map,ui,syncClouds);const now=Date.now()/1000;if(marker&&frames[Radar.getIndex()]&&Math.abs(frames[Radar.getIndex()].time-now)<60)marker.style.display='block';else if(marker)marker.style.display='none';},5*60*1000);
+  Radar.paint(L,map,ui,syncClouds);
+  const marker=document.getElementById('currentTimeMarker');
+  const updateCurrentMarker=()=>{const frames=Radar.getFrames();const frame=frames[Radar.getIndex()];const now=Date.now()/1000;if(marker)marker.style.display=frame&&Math.abs(frame.time-now)<15*60?'block':'none';};
+  updateCurrentMarker();
+
+  setInterval(async()=>{
+    await Radar.loadRadar();
+    // GetCapabilities ist relativ teuer und wird nur erneuert, solange der
+    // Satelliten-Layer tatsächlich aktiv ist. satellite.js drosselt zusätzlich.
+    if(ui.chkClouds.checked) await Sat.loadSatellite({discover:true});
+    const frames=Radar.getFrames();
+    const current=frames[Radar.getIndex()];
+    if(current)syncClouds(current.time);
+    Radar.paint(L,map,ui,syncClouds);
+    updateCurrentMarker();
+  },5*60*1000);
 }
 boot();
