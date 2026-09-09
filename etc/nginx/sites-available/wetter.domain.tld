@@ -127,33 +127,37 @@ server {
 
     # --- EUMETView Satellit WMS (same-origin, lazy im Frontend) ---
     location = /eumetview/wms {
-        proxy_pass https://view.eumetsat.int/geoserver/wms?$args;
+        # Query-Parameter werden von nginx automatisch weitergereicht. Kein
+        # $args im proxy_pass: dadurch bleibt der Upstream statisch auflösbar
+        # und wir vermeiden 502 durch eine zur Laufzeit nötige DNS-Auflösung.
+        proxy_pass https://view.eumetsat.int/geoserver/wms;
         proxy_set_header Host view.eumetsat.int;
         proxy_ssl_server_name on;
         proxy_ssl_name view.eumetsat.int;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
+        proxy_set_header Accept-Encoding "";
 
         proxy_connect_timeout 5s;
-        proxy_read_timeout 12s;
-        proxy_send_timeout 12s;
+        proxy_read_timeout 20s;
+        proxy_send_timeout 20s;
         proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
         proxy_next_upstream_tries 2;
 
-        # GetCapabilities und identische GetMap-Aufrufe nicht für jeden Client
-        # erneut bei EUMETSAT abholen.
+        # GetMap wird jetzt immer mit einem expliziten WMS-time geladen. Damit
+        # ist ein Cache-Treffer eindeutig an genau diesen Satellitenframe gebunden.
+        # Fehlerantworten und veraltete Live-Antworten werden nicht mehr als
+        # stale weitergereicht.
         proxy_cache dwdcache;
         proxy_cache_lock on;
-        proxy_cache_valid 200 5m;
-        proxy_cache_valid any 1m;
-        proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
+        proxy_cache_valid 200 10m;
+        proxy_cache_bypass $arg_nocache;
+        proxy_no_cache $arg_nocache;
 
-        # Für die aktuelle Fehlersuche: Cache-/Upstream-Zustand sowohl als Header
-        # als auch in einer eigenen, IP-freien Logdatei sichtbar machen.
         add_header X-Wetter-Cache $upstream_cache_status always;
         add_header X-Wetter-Upstream $upstream_status always;
         add_header Access-Control-Allow-Origin * always;
-        add_header Cache-Control "public, max-age=300, stale-while-revalidate=600" always;
+        add_header Cache-Control "public, max-age=120" always;
         access_log /var/log/nginx/wetter-satellite.access.log wetter_satellite;
     }
 
