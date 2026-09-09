@@ -5,7 +5,18 @@ This backend pipeline downloads 10 m wind from the NOAA/NCEP GFS 1.0° grid via 
 ## Prerequisites
 
 - Java runtime for `@weacast/grib2json` (`default-jre-headless` on Debian/Ubuntu)
-- Node.js and the repository dependencies (`npm install`)
+- Node.js and the repository dependencies
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y default-jre-headless
+cd /var/www/wetterradar
+npm install
+```
+
+`@weacast/grib2json` requires Java. The fetcher automatically uses `/usr/lib/jvm/default-java` when `JAVA_HOME` is not already set; the supplied systemd unit also sets this path explicitly.
 
 ## Deployment
 
