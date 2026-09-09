@@ -7,6 +7,7 @@ const PORT = Number(process.env.CLIENT_LOG_PORT || 9044);
 const LOG_FILE = process.env.CLIENT_LOG_FILE || '/var/log/wetterradar/client.log';
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_RECORDS = 100;
+const MAX_STRING = 4000;
 
 await fs.mkdir(path.dirname(LOG_FILE), { recursive: true });
 
@@ -17,9 +18,25 @@ function reply(res, status, body = ''){
   res.end(body);
 }
 
-function cleanString(value, max = 4000){
+function cleanString(value, max = MAX_STRING){
   if (value == null) return null;
   return String(value).slice(0, max);
+}
+
+function safeData(value, depth = 0){
+  if (depth > 3) return '[depth-limit]';
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return cleanString(value);
+  if (Array.isArray(value)) return value.slice(0, 20).map(item => safeData(item, depth + 1));
+  if (typeof value === 'object') {
+    const out = {};
+    for (const [key, item] of Object.entries(value).slice(0, 30)) {
+      if (/token|password|secret|authorization|cookie/i.test(key)) out[cleanString(key, 120)] = '[redacted]';
+      else out[cleanString(key, 120)] = safeData(item, depth + 1);
+    }
+    return out;
+  }
+  return cleanString(value);
 }
 
 function sanitizeRecord(input){
@@ -32,7 +49,7 @@ function sanitizeRecord(input){
     event: cleanString(input?.event, 160),
     session: cleanString(input?.session, 120),
     page: cleanString(input?.page, 500),
-    data: input?.data ?? null,
+    data: safeData(input?.data ?? null),
   };
 }
 
@@ -91,7 +108,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     const status = Number(err?.status) || 500;
     process.stderr.write(`[client-log] ${err?.stack || err}\n`);
-    if (!res.headersSent) reply(res, status, JSON.stringify({ error: status === 500 ? 'internal error' : err.message }));
+    if (!res.headersSent) reply(res, status, JSON.stringify({ error: status === 500 ? 'internal error' : cleanString(err.message, 500) }));
     else res.end();
   }
 });
