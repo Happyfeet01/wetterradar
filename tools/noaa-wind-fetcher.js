@@ -3,6 +3,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { tmpdir } from 'os';
+import { pathToFileURL } from 'url';
 
 const execFileAsync = promisify(execFile);
 
@@ -25,33 +26,41 @@ function formatDatePart(value) {
   return value.toString().padStart(2, '0');
 }
 
-function buildCandidates() {
-  const now = new Date();
+function formatDateUtc(date) {
+  return `${date.getUTCFullYear()}${formatDatePart(date.getUTCMonth() + 1)}${formatDatePart(date.getUTCDate())}`;
+}
+
+export function buildCandidates(now = new Date()) {
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-
-  const dates = [today, yesterday];
   const candidates = [];
 
-  for (const date of dates) {
-    const y = date.getUTCFullYear();
-    const m = formatDatePart(date.getUTCMonth() + 1);
-    const d = formatDatePart(date.getUTCDate());
-    for (const cycle of CYCLES) {
-      candidates.push({
-        date: `${y}${m}${d}`,
-        cycle,
-      });
+  // Für heute nur Zyklen probieren, deren nominelle UTC-Laufzeit bereits
+  // erreicht ist. Vorher wurde z. B. um 15 UTC bereits der 18z-Lauf
+  // angefragt, was bei NOMADS zwangsläufig mit 403/404 endet.
+  const currentUtcHour = now.getUTCHours();
+  for (const cycle of CYCLES) {
+    if (Number(cycle) <= currentUtcHour) {
+      candidates.push({ date: formatDateUtc(today), cycle });
     }
+  }
+
+  // Vom Vortag dürfen alle vier Läufe als Fallback versucht werden.
+  for (const cycle of CYCLES) {
+    candidates.push({ date: formatDateUtc(yesterday), cycle });
   }
 
   return candidates;
 }
 
-function buildNomadsUrl(date, cycle) {
+export function buildNomadsUrl(date, cycle) {
   const url = new URL(NOMADS_BASE);
   url.searchParams.set('dir', `/gfs.${date}/${cycle}/atmos`);
-  url.searchParams.set('file', `gfs.t${cycle}z.pgrb2.1p0.f000`);
+
+  // Offizieller Dateiname des 1.00°-GFS lautet "1p00". Hier stand zuvor
+  // versehentlich "1p0"; dadurch wurde eine nicht existierende Datei
+  // angefordert und der NOMADS-Filter antwortete mit 500.
+  url.searchParams.set('file', `gfs.t${cycle}z.pgrb2.1p00.f000`);
   url.searchParams.set('lev_10_m_above_ground', 'on');
   url.searchParams.set('var_UGRD', 'on');
   url.searchParams.set('var_VGRD', 'on');
@@ -64,7 +73,11 @@ function buildNomadsUrl(date, cycle) {
 
 async function fetchBuffer(url) {
   log(`Fetching GRIB2 from ${url}`);
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'wetterradar/1.0 (+https://github.com/Happyfeet01/wetterradar)'
+    }
+  });
 
   if (!response.ok) {
     throw new Error(`Unexpected status ${response.status}`);
@@ -87,8 +100,8 @@ async function fetchBuffer(url) {
   return buffer;
 }
 
-async function downloadLatestGrib() {
-  const candidates = buildCandidates();
+async function downloadLatestGrib(now = new Date()) {
+  const candidates = buildCandidates(now);
   let lastError;
 
   for (const { date, cycle } of candidates) {
@@ -127,6 +140,8 @@ async function convertGribToJson(gribPath) {
     parsed = JSON.parse(content);
   } catch (error) {
     throw new Error(`Invalid JSON from grib2json: ${error.message}`);
+  } finally {
+    await fs.rm(outputPath, { force: true }).catch(() => {});
   }
 
   if (!Array.isArray(parsed) || parsed.length < 2) {
@@ -231,7 +246,7 @@ function buildPayload(records, analysis, nowIso) {
   };
 }
 
-async function main() {
+export async function main() {
   try {
     const { buffer, date, cycle } = await downloadLatestGrib();
     await saveAtomic(GRIB_PATH, buffer);
@@ -255,4 +270,6 @@ async function main() {
   }
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}
