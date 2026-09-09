@@ -71,6 +71,14 @@ export function getIndex(){ return idx; }
 export function getLastError(){ return lastError; }
 export function step(d){ if(!frames.length) return; idx = (idx + d + frames.length) % frames.length; }
 
+export function setOpacity(value){
+  const opacity = Number(value);
+  if (!Number.isFinite(opacity)) return;
+  const clamped = Math.min(1, Math.max(0, opacity));
+  if (curr && typeof curr.setOpacity === 'function') curr.setOpacity(clamped);
+  if (next && typeof next.setOpacity === 'function') next.setOpacity(clamped);
+}
+
 function radarUrl(frame, ui){
   // RainViewer Free-Tier: nur noch Farbschema 8 (Universal Blue) verfügbar.
   const color = 8;
@@ -100,7 +108,7 @@ export function paint(L, map, ui, syncCloudsCb){
   // anlegen. Das spart unnötige RainViewer-Tile-Requests.
   const paintKey = `${f.time}|${f.path}|${ui.chkSmooth.checked ? 1 : 0}`;
   if (curr && paintKey === lastPaintKey) {
-    curr.setOpacity(op);
+    setOpacity(op);
     if (syncCloudsCb) syncCloudsCb(f.time);
     return true;
   }
