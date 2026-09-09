@@ -1,8 +1,6 @@
 // Satellitenbilder via EUMETView (EUMETSAT WMS).
-// Für die aktuelle Ansicht wird bewusst kein WMS-time Parameter gesetzt:
-// EUMETView liefert dann laut API-Dokumentation das jeweils neueste Bild.
-// Historische Radarframes werden weiterhin auf den nächstliegenden Satelliten-
-// Zeitpunkt synchronisiert.
+// Aktuelle Bilder werden immer auf den neuesten im WMS-Zeitindex gemeldeten
+// Zeitpunkt gepinnt. Das vermeidet uneindeutiges "Latest" ohne time-Parameter.
 import {
   EUMETVIEW_SAT_BOUNDS,
   EUMETVIEW_SAT_IMAGE,
@@ -20,8 +18,7 @@ const FALLBACK_FRAME_COUNT = 24;
 const MAX_CAPABILITY_FRAMES = 240;
 const CAPABILITIES_TIMEOUT_MS = 8000;
 const IMAGE_TIMEOUT_MS = 12000;
-const DISCOVERY_REFRESH_MS = 10 * 60 * 1000;
-const LATEST_REFRESH_MS = 5 * 60 * 1000;
+const DISCOVERY_REFRESH_MS = 5 * 60 * 1000;
 const CURRENT_SYNC_WINDOW_MS = 45 * 60 * 1000;
 const STALE_TIME_INDEX_MS = 2 * 60 * 60 * 1000;
 
@@ -39,6 +36,7 @@ let discoveryPromise = null;
 let lastDiscoveryAt = 0;
 let lastError = null;
 let lastRequestedUrl = null;
+let hasDiscoveredFrames = false;
 
 function setUiStatus(text){
   if (typeof document === 'undefined') return;
@@ -111,6 +109,10 @@ function getCurrentFrame(){
   return frames[currentFrameIndex] ?? null;
 }
 
+function getNewestFrame(){
+  return frames.at(-1) ?? null;
+}
+
 function findNearestFrameIndex(timeUnix){
   if (!frames.length) return 0;
   if (!Number.isFinite(timeUnix)) return frames.length - 1;
@@ -133,15 +135,7 @@ function isNearCurrentTime(timeUnix, nowMs = Date.now()){
   return Math.abs(nowMs - timeUnix * 1000) <= CURRENT_SYNC_WINDOW_MS;
 }
 
-function latestRefreshKey(nowMs = Date.now()){
-  return Math.floor(nowMs / LATEST_REFRESH_MS);
-}
-
-function buildGetMapUrl(
-  endpoint,
-  timeIso = getCurrentFrame()?.iso,
-  { latest = false, refreshKey = null, layerName = EUMETVIEW_SAT_LAYER } = {}
-){
+function buildGetMapUrl(endpoint, timeIso = getCurrentFrame()?.iso, { layerName = EUMETVIEW_SAT_LAYER } = {}){
   const { bounds, width, height } = getImageConfig();
   const [[south, west], [north, east]] = bounds;
   const params = new URLSearchParams({
@@ -159,24 +153,21 @@ function buildGetMapUrl(
     height: String(height),
   });
 
-  // Ohne time liefert EUMETView den neuesten verfügbaren Datensatz. Das ist
-  // robuster als den aktuellen Layer an eine ggf. veraltete Capabilities-
-  // Zeitliste zu pinnen.
-  if (!latest && timeIso) params.set('time', timeIso);
-  if (latest && refreshKey != null) params.set('_refresh', String(refreshKey));
-
+  if (timeIso) params.set('time', timeIso);
   return `${normalizeWmsUrl(endpoint)}${params.toString()}`;
 }
 
-function buildActiveGetMapUrl(endpoint, nowMs = Date.now()){
-  const latest = isNearCurrentTime(lastSyncTimeUnix, nowMs);
-  if (latest) {
-    return buildGetMapUrl(endpoint, null, {
-      latest: true,
-      refreshKey: latestRefreshKey(nowMs),
-    });
+function activeFrame(nowMs = Date.now()){
+  if (isNearCurrentTime(lastSyncTimeUnix, nowMs)) {
+    return hasDiscoveredFrames ? getNewestFrame() : null;
   }
-  return buildGetMapUrl(endpoint, getCurrentFrame()?.iso);
+  return getCurrentFrame();
+}
+
+function buildActiveGetMapUrl(endpoint, nowMs = Date.now()){
+  const frame = activeFrame(nowMs);
+  if (!frame?.iso) return null;
+  return buildGetMapUrl(endpoint, frame.iso);
 }
 
 function buildGetCapabilitiesUrl(endpoint){
@@ -234,10 +225,6 @@ function expandTimeList(value){
   });
 }
 
-// Regex über einen kompletten verschachtelten WMS-Layer ist fehleranfällig, weil
-// ein äußeres </Layer> vor dem gesuchten Kind enden kann. Daher bestimmen wir
-// erst den <Name>-Treffer und laufen dann über die Layer-Tags, um genau den
-// umschließenden Layerblock zu finden.
 function extractLayerXml(xml, layerName = EUMETVIEW_SAT_LAYER){
   if (typeof xml !== 'string' || !xml) return '';
   const escapedLayer = escapeRegExp(layerName);
@@ -285,13 +272,12 @@ async function fetchSatelliteFrames(endpoint){
   const res = await fetchWithTimeout(buildGetCapabilitiesUrl(endpoint), { cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const xml = await res.text();
-  return parseSatelliteTimes(xml)
-    .map(toSatelliteFrame)
-    .filter(Boolean);
+  return parseSatelliteTimes(xml).map(toSatelliteFrame).filter(Boolean);
 }
 
 function newestDiscoveredAgeMs(nowMs = Date.now()){
-  const newest = frames.at(-1);
+  if (!hasDiscoveredFrames) return Infinity;
+  const newest = getNewestFrame();
   if (!Number.isFinite(newest?.time)) return Infinity;
   return Math.max(0, nowMs - newest.time * 1000);
 }
@@ -305,12 +291,13 @@ function formatUtc(iso){
 
 function satelliteStatusText(nowMs = Date.now()){
   if (!enabled) return 'aus';
-  if (isNearCurrentTime(lastSyncTimeUnix, nowMs)) {
-    const timeIndexStale = newestDiscoveredAgeMs(nowMs) > STALE_TIME_INDEX_MS;
-    return timeIndexStale ? 'EUMETView · Latest (Zeitindex alt)' : 'EUMETView · Latest';
+  const frame = activeFrame(nowMs);
+  if (!frame) return 'EUMETView · Zeitindex nicht verfügbar';
+  const time = formatUtc(frame.iso);
+  if (isNearCurrentTime(lastSyncTimeUnix, nowMs) && newestDiscoveredAgeMs(nowMs) > STALE_TIME_INDEX_MS) {
+    return `EUMETView · ${time} (Zeitindex alt)`;
   }
-  const historical = formatUtc(getCurrentFrame()?.iso);
-  return historical ? `EUMETView · ${historical}` : 'EUMETView';
+  return time ? `EUMETView · ${time}` : 'EUMETView';
 }
 
 export async function loadSatellite({ discover = false, force = false } = {}){
@@ -337,19 +324,20 @@ export async function loadSatellite({ discover = false, force = false } = {}){
         const discovered = await fetchSatelliteFrames(endpoint);
         if (discovered.length) {
           frames = discovered.slice(-MAX_CAPABILITY_FRAMES);
+          hasDiscoveredFrames = true;
           endpointIndex = i;
           currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
           lastError = null;
           return frames;
         }
+        discoveryError = new Error(`Keine Satellitenzeiten in GetCapabilities: ${endpoint}`);
       } catch (err) {
         discoveryError = err;
         console.warn('EUMETView-Satellitenzeiten konnten nicht geladen werden:', endpoint, err);
       }
     }
 
-    // Für die aktuelle Ansicht bleibt der Layer trotzdem nutzbar, weil GetMap
-    // ohne time den neuesten verfügbaren Datensatz anfordert.
+    hasDiscoveredFrames = false;
     lastError = discoveryError;
     return frames;
   })().finally(() => {
@@ -379,14 +367,20 @@ function removeCurrentLayer(){
 
 function endpointOrder(){
   if (!endpoints.length) return [];
-  const order = [endpointIndex, ...endpoints.map((_, i) => i)]
+  return [endpointIndex, ...endpoints.map((_, i) => i)]
     .filter((value, index, all) => value >= 0 && value < endpoints.length && all.indexOf(value) === index);
-  return order;
 }
 
 async function addLayerWithFallback(L, map, opacity){
   if (!enabled) return false;
   if (!endpoints.length) endpoints = buildEndpointList(EUMETVIEW_WMS, EUMETVIEW_WMS_FALLBACKS);
+
+  const initialUrl = buildActiveGetMapUrl(endpoints[endpointIndex] ?? endpoints[0]);
+  if (!initialUrl) {
+    lastError = new Error('Kein bestätigter EUMETView-Zeitpunkt verfügbar');
+    setUiStatus('EUMETView · Zeitindex nicht verfügbar');
+    return false;
+  }
 
   let imageError = null;
   for (const i of endpointOrder()) {
@@ -394,6 +388,7 @@ async function addLayerWithFallback(L, map, opacity){
 
     const endpoint = endpoints[i];
     const url = buildActiveGetMapUrl(endpoint);
+    if (!url) continue;
     const candidate = createLayer(L, url, opacity);
     layer = candidate;
 
@@ -415,10 +410,7 @@ async function addLayerWithFallback(L, map, opacity){
       };
       const onLoad = () => finish(true);
       const onError = () => fail(new Error(`WMS-Bildfehler: ${endpoint}`));
-      const timer = setTimeout(
-        () => fail(new Error(`Bild-Timeout nach ${IMAGE_TIMEOUT_MS} ms`)),
-        IMAGE_TIMEOUT_MS
-      );
+      const timer = setTimeout(() => fail(new Error(`Bild-Timeout nach ${IMAGE_TIMEOUT_MS} ms`)), IMAGE_TIMEOUT_MS);
 
       candidate.on('load', onLoad);
       candidate.on('error', onError);
@@ -458,10 +450,12 @@ export async function toggle(L, map, on, opacity = 0.7){
   endpointIndex = 0;
   setUiStatus('lädt…');
 
-  // Historische Zeitpunkte werden weiterhin entdeckt. Für die aktuelle Ansicht
-  // ist diese Liste aber nicht mehr kritisch, weil Latest ohne time geladen wird.
-  await loadSatellite({ discover: true });
+  await loadSatellite({ discover: true, force: true });
   if (!enabled) return false;
+  if (!hasDiscoveredFrames) {
+    setUiStatus('EUMETView · Zeitindex nicht verfügbar');
+    return false;
+  }
 
   currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
   return addLayerWithFallback(L, map, opacity);
@@ -500,6 +494,11 @@ export function syncTo(timeUnix){
 
   const endpoint = endpoints[endpointIndex] ?? DEFAULT_WMS_ENDPOINTS[0];
   const url = buildActiveGetMapUrl(endpoint);
+  if (!url) {
+    lastError = new Error('Kein bestätigter EUMETView-Zeitpunkt verfügbar');
+    setUiStatus('EUMETView · Zeitindex nicht verfügbar');
+    return;
+  }
   if (url === lastRequestedUrl) {
     setUiStatus(satelliteStatusText());
     return;
@@ -523,7 +522,6 @@ export const __test = {
   CAPABILITIES_TIMEOUT_MS,
   IMAGE_TIMEOUT_MS,
   DISCOVERY_REFRESH_MS,
-  LATEST_REFRESH_MS,
   CURRENT_SYNC_WINDOW_MS,
   STALE_TIME_INDEX_MS,
   buildEndpointList,
@@ -538,7 +536,6 @@ export const __test = {
   findNearestFrameIndex,
   getImageConfig,
   isNearCurrentTime,
-  latestRefreshKey,
   normalizeIsoTime,
   normalizeWmsUrl,
   parseIsoPeriodMs,
