@@ -4,8 +4,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test js/*.test.js",
-    "wind:once": "node wind-fetcher.js --once",
-    "wind:watch": "node wind-fetcher.js"
+    "wind:once": "node tools/noaa-wind-fetcher.js",
+    "wind:legacy:openmeteo": "node wind-fetcher.js"
   },
   "keywords": [],
   "author": "",

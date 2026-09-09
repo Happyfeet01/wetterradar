@@ -10,17 +10,23 @@ import {
 import { __test, loadSatellite } from './satellite.js';
 
 const {
+  LATEST_REFRESH_MS,
   buildEndpointList,
   buildFallbackFrames,
   buildGetCapabilitiesUrl,
   buildGetMapUrl,
   expandTimeInterval,
   expandTimeList,
+  extractLayerXml,
   fetchWithTimeout,
+  findNearestFrameIndex,
   getImageConfig,
+  isNearCurrentTime,
+  latestRefreshKey,
   normalizeWmsUrl,
   parseIsoPeriodMs,
   parseSatelliteTimes,
+  toSatelliteFrame,
 } = __test;
 
 describe('EUMETView satellite WMS configuration', () => {
@@ -42,7 +48,7 @@ describe('EUMETView satellite WMS configuration', () => {
     assert.equal(normalizeWmsUrl(''), null);
   });
 
-  it('builds a WMS 1.3.0 EPSG:4326 GetMap URL for the Europe overlay', () => {
+  it('builds a historical WMS 1.3.0 EPSG:4326 GetMap URL for the Europe overlay', () => {
     const url = buildGetMapUrl(EUMETVIEW_WMS, '2026-07-10T09:00:00.000Z');
     const parsed = new URL(url, 'https://wetter.example');
 
@@ -56,7 +62,26 @@ describe('EUMETView satellite WMS configuration', () => {
     assert.equal(parsed.searchParams.get('width'), String(EUMETVIEW_SAT_IMAGE.width));
     assert.equal(parsed.searchParams.get('height'), String(EUMETVIEW_SAT_IMAGE.height));
     assert.equal(parsed.searchParams.get('time'), '2026-07-10T09:00:00.000Z');
-    assert.equal(parsed.searchParams.has('_t'), false);
+    assert.equal(parsed.searchParams.has('_refresh'), false);
+  });
+
+  it('requests the newest EUMETView image without time and rotates a five-minute refresh key', () => {
+    const firstNow = Date.parse('2026-09-09T12:30:00Z');
+    const secondNow = firstNow + LATEST_REFRESH_MS;
+    const key1 = latestRefreshKey(firstNow);
+    const key2 = latestRefreshKey(secondNow);
+    const url = buildGetMapUrl(EUMETVIEW_WMS, null, { latest: true, refreshKey: key1 });
+    const parsed = new URL(url, 'https://wetter.example');
+
+    assert.equal(parsed.searchParams.has('time'), false);
+    assert.equal(parsed.searchParams.get('_refresh'), String(key1));
+    assert.equal(key2, key1 + 1);
+  });
+
+  it('treats a slightly delayed current radar frame as a latest-satellite request', () => {
+    const now = Date.parse('2026-09-09T12:30:00Z');
+    assert.equal(isNearCurrentTime((now - 20 * 60 * 1000) / 1000, now), true);
+    assert.equal(isNearCurrentTime((now - 60 * 60 * 1000) / 1000, now), false);
   });
 
   it('builds a GetCapabilities URL for EUMETView', () => {
@@ -83,6 +108,22 @@ describe('EUMETView satellite WMS configuration', () => {
     assert.equal(values.at(-1), '2026-07-10T00:00:00.000Z');
   });
 
+  it('extracts the exact nested WMS layer instead of stopping at a sibling Layer closing tag', () => {
+    const xml = `<WMS_Capabilities><Capability><Layer>
+      <Name>root</Name>
+      <Layer><Name>other:layer</Name><Dimension name="time">2020-01-01T00:00:00Z</Dimension></Layer>
+      <Layer queryable="1"><Name>${EUMETVIEW_SAT_LAYER}</Name>
+        <Dimension name="time">2026-07-10T00:00:00Z/2026-07-10T00:20:00Z/PT10M</Dimension>
+        <Layer><Name>nested:child</Name></Layer>
+      </Layer>
+    </Layer></Capability></WMS_Capabilities>`;
+
+    const layerXml = extractLayerXml(xml);
+    assert.match(layerXml, new RegExp(EUMETVIEW_SAT_LAYER.replace(':', '\\:')));
+    assert.match(layerXml, /2026-07-10T00:20:00Z/);
+    assert.doesNotMatch(layerXml, /other:layer/);
+  });
+
   it('parses the GeoColour layer time dimension from capabilities XML', () => {
     const xml = `<WMS_Capabilities><Capability><Layer><Layer>
       <Name>${EUMETVIEW_SAT_LAYER}</Name>
@@ -94,6 +135,25 @@ describe('EUMETView satellite WMS configuration', () => {
       '2026-07-10T00:10:00.000Z',
       '2026-07-10T00:20:00.000Z',
     ]);
+  });
+
+  it('normalizes discovered WMS times to the same frame shape as fallback frames', () => {
+    assert.deepEqual(toSatelliteFrame('2026-07-10T09:20:00Z'), {
+      time: Date.parse('2026-07-10T09:20:00Z') / 1000,
+      iso: '2026-07-10T09:20:00.000Z',
+    });
+    assert.equal(toSatelliteFrame('not-a-date'), null);
+  });
+
+  it('keeps the common frame representation required for nearest-time selection', () => {
+    const originalFrames = buildFallbackFrames(Date.parse('2026-07-10T10:04:00Z'));
+    const target = Date.parse('2026-07-10T09:52:00Z') / 1000;
+    const normalized = originalFrames.map(frame => toSatelliteFrame(frame.iso));
+
+    assert.equal(normalized.at(-2).iso, '2026-07-10T09:50:00.000Z');
+    assert.ok(Number.isFinite(normalized.at(-2).time));
+    assert.equal(typeof findNearestFrameIndex, 'function');
+    assert.ok(Number.isFinite(target));
   });
 
   it('creates four hours of 10-minute fallback frames', () => {

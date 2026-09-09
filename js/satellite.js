@@ -1,7 +1,8 @@
 // Satellitenbilder via EUMETView (EUMETSAT WMS).
-// Wichtig: Der Satellit liegt nicht im kritischen Startpfad. Beim Boot werden nur
-// lokale Fallback-Zeitpunkte vorbereitet; Netzwerkzugriffe beginnen erst, wenn
-// der Nutzer den Satelliten-Layer einschaltet.
+// Für die aktuelle Ansicht wird bewusst kein WMS-time Parameter gesetzt:
+// EUMETView liefert dann laut API-Dokumentation das jeweils neueste Bild.
+// Historische Radarframes werden weiterhin auf den nächstliegenden Satelliten-
+// Zeitpunkt synchronisiert.
 import {
   EUMETVIEW_SAT_BOUNDS,
   EUMETVIEW_SAT_IMAGE,
@@ -20,6 +21,9 @@ const MAX_CAPABILITY_FRAMES = 240;
 const CAPABILITIES_TIMEOUT_MS = 8000;
 const IMAGE_TIMEOUT_MS = 12000;
 const DISCOVERY_REFRESH_MS = 10 * 60 * 1000;
+const LATEST_REFRESH_MS = 5 * 60 * 1000;
+const CURRENT_SYNC_WINDOW_MS = 45 * 60 * 1000;
+const STALE_TIME_INDEX_MS = 2 * 60 * 60 * 1000;
 
 let layer = null;
 let endpointIndex = 0;
@@ -34,6 +38,7 @@ let lastSyncTimeUnix = null;
 let discoveryPromise = null;
 let lastDiscoveryAt = 0;
 let lastError = null;
+let lastRequestedUrl = null;
 
 function setUiStatus(text){
   if (typeof document === 'undefined') return;
@@ -62,51 +67,6 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = CAPABILITIES_TIME
   }
 }
 
-export async function loadSatellite({ discover = false, force = false } = {}){
-  endpoints = buildEndpointList(EUMETVIEW_WMS, EUMETVIEW_WMS_FALLBACKS);
-  if (!frames.length) {
-    frames = buildFallbackFrames();
-    currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
-  }
-
-  // Boot-Aufruf: absichtlich keinerlei WMS-Request.
-  if (!discover) {
-    setUiStatus('bei Bedarf');
-    return frames;
-  }
-
-  if (!force && lastDiscoveryAt && Date.now() - lastDiscoveryAt < DISCOVERY_REFRESH_MS) return frames;
-  if (discoveryPromise) return discoveryPromise;
-
-  discoveryPromise = (async () => {
-    let discoveryError = null;
-    for (let i = 0; i < endpoints.length; i += 1) {
-      const endpoint = endpoints[i];
-      try {
-        const discovered = await fetchSatelliteFrames(endpoint);
-        if (discovered.length) {
-          frames = discovered.slice(-MAX_CAPABILITY_FRAMES);
-          endpointIndex = i;
-          currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
-          lastDiscoveryAt = Date.now();
-          lastError = null;
-          return frames;
-        }
-      } catch (err) {
-        discoveryError = err;
-        console.warn('EUMETView-Satellitenzeiten konnten nicht geladen werden:', endpoint, err);
-      }
-    }
-
-    // Zeit-Ermittlung ist optional: der Layer kann mit den lokal erzeugten
-    // 10-Minuten-Zeitpunkten bzw. dem neuesten Bild weiterarbeiten.
-    lastError = discoveryError;
-    return frames;
-  })().finally(() => { discoveryPromise = null; });
-
-  return discoveryPromise;
-}
-
 function normalizeWmsUrl(url){
   if (typeof url !== 'string') return null;
   const trimmed = url.trim();
@@ -127,102 +87,16 @@ function getImageConfig(){
   return { bounds, width: image.width ?? 1200, height: image.height ?? 800 };
 }
 
-function buildGetMapUrl(endpoint, timeIso = getCurrentFrame()?.iso){
-  const { bounds, width, height } = getImageConfig();
-  const [[south, west], [north, east]] = bounds;
-  const params = new URLSearchParams({
-    service: 'WMS',
-    version: '1.3.0',
-    request: 'GetMap',
-    layers: EUMETVIEW_SAT_LAYER,
-    styles: '',
-    format: 'image/png',
-    transparent: 'true',
-    crs: 'EPSG:4326',
-    // WMS 1.3.0 + EPSG:4326 nutzt die Achsenreihenfolge latitude/longitude.
-    bbox: [south, west, north, east].join(','),
-    width: String(width),
-    height: String(height),
-  });
-  if (timeIso) params.set('time', timeIso);
-  return `${normalizeWmsUrl(endpoint)}${params.toString()}`;
-}
-
-function buildGetCapabilitiesUrl(endpoint){
-  const params = new URLSearchParams({ service: 'WMS', version: '1.3.0', request: 'GetCapabilities' });
-  return `${normalizeWmsUrl(endpoint)}${params.toString()}`;
-}
-
-async function fetchSatelliteFrames(endpoint){
-  const res = await fetchWithTimeout(buildGetCapabilitiesUrl(endpoint), { cache: 'no-store' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const xml = await res.text();
-  return parseSatelliteTimes(xml);
-}
-
-function escapeRegExp(value){
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function parseSatelliteTimes(xml, layerName = EUMETVIEW_SAT_LAYER){
-  const escapedLayer = escapeRegExp(layerName);
-  const layerPattern = new RegExp(`<Layer\\b[\\s\\S]*?<Name>\\s*${escapedLayer}\\s*<\\/Name>[\\s\\S]*?<\\/Layer>`, 'i');
-  const layerXml = xml.match(layerPattern)?.[0] || '';
-  if (!layerXml) return [];
-
-  const times = [...layerXml.matchAll(/<(?:Extent|Dimension)\b[^>]*name=["']time["'][^>]*>([\s\S]*?)<\/(?:Extent|Dimension)>/gi)]
-    .flatMap(match => expandTimeList(decodeXmlEntities(match[1])));
-  return [...new Set(times)]
-    .filter(iso => Number.isFinite(Date.parse(iso)))
-    .sort((a, b) => Date.parse(a) - Date.parse(b))
-    .slice(-MAX_CAPABILITY_FRAMES);
-}
-
-function decodeXmlEntities(value){
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
-
-function expandTimeList(value){
-  return value.split(',').map(part => part.trim()).filter(Boolean).flatMap(part => {
-    const pieces = part.split('/').map(piece => piece.trim());
-    if (pieces.length !== 3) return [normalizeIsoTime(part)].filter(Boolean);
-    return expandTimeInterval(pieces[0], pieces[1], pieces[2]);
-  });
-}
-
-function expandTimeInterval(startRaw, endRaw, periodRaw){
-  const start = Date.parse(startRaw);
-  const end = Date.parse(endRaw);
-  const step = parseIsoPeriodMs(periodRaw);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || !step || end < start) return [];
-
-  const total = Math.floor((end - start) / step) + 1;
-  const firstIndex = Math.max(0, total - MAX_CAPABILITY_FRAMES);
-  const values = [];
-  for (let i = firstIndex; i < total && values.length < MAX_CAPABILITY_FRAMES; i += 1) {
-    values.push(new Date(start + i * step).toISOString());
-  }
-  return values;
-}
-
-function parseIsoPeriodMs(period){
-  const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i.exec(period.trim());
-  if (!match) return 0;
-  const days = Number(match[1] || 0);
-  const hours = Number(match[2] || 0);
-  const minutes = Number(match[3] || 0);
-  const seconds = Number(match[4] || 0);
-  return (((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000;
-}
-
 function normalizeIsoTime(value){
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function toSatelliteFrame(value){
+  const rawIso = typeof value === 'string' ? value : value?.iso;
+  const iso = normalizeIsoTime(rawIso);
+  if (!iso) return null;
+  return { time: Date.parse(iso) / 1000, iso };
 }
 
 function buildFallbackFrames(now = Date.now()){
@@ -240,13 +114,251 @@ function getCurrentFrame(){
 function findNearestFrameIndex(timeUnix){
   if (!frames.length) return 0;
   if (!Number.isFinite(timeUnix)) return frames.length - 1;
+
   let nearest = 0;
   let nearestDistance = Infinity;
   frames.forEach((frame, i) => {
+    if (!Number.isFinite(frame?.time)) return;
     const distance = Math.abs(frame.time - timeUnix);
-    if (distance < nearestDistance) { nearest = i; nearestDistance = distance; }
+    if (distance < nearestDistance) {
+      nearest = i;
+      nearestDistance = distance;
+    }
   });
   return nearest;
+}
+
+function isNearCurrentTime(timeUnix, nowMs = Date.now()){
+  if (!Number.isFinite(timeUnix)) return true;
+  return Math.abs(nowMs - timeUnix * 1000) <= CURRENT_SYNC_WINDOW_MS;
+}
+
+function latestRefreshKey(nowMs = Date.now()){
+  return Math.floor(nowMs / LATEST_REFRESH_MS);
+}
+
+function buildGetMapUrl(
+  endpoint,
+  timeIso = getCurrentFrame()?.iso,
+  { latest = false, refreshKey = null, layerName = EUMETVIEW_SAT_LAYER } = {}
+){
+  const { bounds, width, height } = getImageConfig();
+  const [[south, west], [north, east]] = bounds;
+  const params = new URLSearchParams({
+    service: 'WMS',
+    version: '1.3.0',
+    request: 'GetMap',
+    layers: layerName,
+    styles: '',
+    format: 'image/png',
+    transparent: 'true',
+    crs: 'EPSG:4326',
+    // WMS 1.3.0 + EPSG:4326 nutzt latitude/longitude als Achsenreihenfolge.
+    bbox: [south, west, north, east].join(','),
+    width: String(width),
+    height: String(height),
+  });
+
+  // Ohne time liefert EUMETView den neuesten verfügbaren Datensatz. Das ist
+  // robuster als den aktuellen Layer an eine ggf. veraltete Capabilities-
+  // Zeitliste zu pinnen.
+  if (!latest && timeIso) params.set('time', timeIso);
+  if (latest && refreshKey != null) params.set('_refresh', String(refreshKey));
+
+  return `${normalizeWmsUrl(endpoint)}${params.toString()}`;
+}
+
+function buildActiveGetMapUrl(endpoint, nowMs = Date.now()){
+  const latest = isNearCurrentTime(lastSyncTimeUnix, nowMs);
+  if (latest) {
+    return buildGetMapUrl(endpoint, null, {
+      latest: true,
+      refreshKey: latestRefreshKey(nowMs),
+    });
+  }
+  return buildGetMapUrl(endpoint, getCurrentFrame()?.iso);
+}
+
+function buildGetCapabilitiesUrl(endpoint){
+  const params = new URLSearchParams({
+    service: 'WMS',
+    version: '1.3.0',
+    request: 'GetCapabilities'
+  });
+  return `${normalizeWmsUrl(endpoint)}${params.toString()}`;
+}
+
+function escapeRegExp(value){
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function decodeXmlEntities(value){
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function parseIsoPeriodMs(period){
+  const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i.exec(period.trim());
+  if (!match) return 0;
+  const days = Number(match[1] || 0);
+  const hours = Number(match[2] || 0);
+  const minutes = Number(match[3] || 0);
+  const seconds = Number(match[4] || 0);
+  return (((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000;
+}
+
+function expandTimeInterval(startRaw, endRaw, periodRaw){
+  const start = Date.parse(startRaw);
+  const end = Date.parse(endRaw);
+  const step = parseIsoPeriodMs(periodRaw);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !step || end < start) return [];
+
+  const total = Math.floor((end - start) / step) + 1;
+  const firstIndex = Math.max(0, total - MAX_CAPABILITY_FRAMES);
+  const values = [];
+  for (let i = firstIndex; i < total && values.length < MAX_CAPABILITY_FRAMES; i += 1) {
+    values.push(new Date(start + i * step).toISOString());
+  }
+  return values;
+}
+
+function expandTimeList(value){
+  return value.split(',').map(part => part.trim()).filter(Boolean).flatMap(part => {
+    const pieces = part.split('/').map(piece => piece.trim());
+    if (pieces.length !== 3) return [normalizeIsoTime(part)].filter(Boolean);
+    return expandTimeInterval(pieces[0], pieces[1], pieces[2]);
+  });
+}
+
+// Regex über einen kompletten verschachtelten WMS-Layer ist fehleranfällig, weil
+// ein äußeres </Layer> vor dem gesuchten Kind enden kann. Daher bestimmen wir
+// erst den <Name>-Treffer und laufen dann über die Layer-Tags, um genau den
+// umschließenden Layerblock zu finden.
+function extractLayerXml(xml, layerName = EUMETVIEW_SAT_LAYER){
+  if (typeof xml !== 'string' || !xml) return '';
+  const escapedLayer = escapeRegExp(layerName);
+  const nameMatch = new RegExp(`<Name>\\s*${escapedLayer}\\s*<\\/Name>`, 'i').exec(xml);
+  if (!nameMatch) return '';
+
+  const stack = [];
+  const tagPattern = /<\/?Layer\b[^>]*>/gi;
+  tagPattern.lastIndex = 0;
+  let match;
+  while ((match = tagPattern.exec(xml)) && match.index < nameMatch.index) {
+    if (/^<\/Layer/i.test(match[0])) stack.pop();
+    else stack.push(match.index);
+  }
+
+  const start = stack.at(-1);
+  if (!Number.isFinite(start)) return '';
+
+  tagPattern.lastIndex = start;
+  let depth = 0;
+  while ((match = tagPattern.exec(xml))) {
+    if (/^<\/Layer/i.test(match[0])) {
+      depth -= 1;
+      if (depth === 0) return xml.slice(start, tagPattern.lastIndex);
+    } else {
+      depth += 1;
+    }
+  }
+  return '';
+}
+
+function parseSatelliteTimes(xml, layerName = EUMETVIEW_SAT_LAYER){
+  const layerXml = extractLayerXml(xml, layerName);
+  if (!layerXml) return [];
+
+  const times = [...layerXml.matchAll(/<(?:Extent|Dimension)\b[^>]*name=["']time["'][^>]*>([\s\S]*?)<\/(?:Extent|Dimension)>/gi)]
+    .flatMap(match => expandTimeList(decodeXmlEntities(match[1])));
+  return [...new Set(times)]
+    .filter(iso => Number.isFinite(Date.parse(iso)))
+    .sort((a, b) => Date.parse(a) - Date.parse(b))
+    .slice(-MAX_CAPABILITY_FRAMES);
+}
+
+async function fetchSatelliteFrames(endpoint){
+  const res = await fetchWithTimeout(buildGetCapabilitiesUrl(endpoint), { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const xml = await res.text();
+  return parseSatelliteTimes(xml)
+    .map(toSatelliteFrame)
+    .filter(Boolean);
+}
+
+function newestDiscoveredAgeMs(nowMs = Date.now()){
+  const newest = frames.at(-1);
+  if (!Number.isFinite(newest?.time)) return Infinity;
+  return Math.max(0, nowMs - newest.time * 1000);
+}
+
+function formatUtc(iso){
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')} UTC`;
+}
+
+function satelliteStatusText(nowMs = Date.now()){
+  if (!enabled) return 'aus';
+  if (isNearCurrentTime(lastSyncTimeUnix, nowMs)) {
+    const timeIndexStale = newestDiscoveredAgeMs(nowMs) > STALE_TIME_INDEX_MS;
+    return timeIndexStale ? 'EUMETView · Latest (Zeitindex alt)' : 'EUMETView · Latest';
+  }
+  const historical = formatUtc(getCurrentFrame()?.iso);
+  return historical ? `EUMETView · ${historical}` : 'EUMETView';
+}
+
+export async function loadSatellite({ discover = false, force = false } = {}){
+  endpoints = buildEndpointList(EUMETVIEW_WMS, EUMETVIEW_WMS_FALLBACKS);
+  if (!frames.length) {
+    frames = buildFallbackFrames();
+    currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
+  }
+
+  // Boot-Aufruf: absichtlich keinerlei WMS-Request.
+  if (!discover) {
+    setUiStatus(enabled ? satelliteStatusText() : 'bei Bedarf');
+    return frames;
+  }
+
+  if (!force && lastDiscoveryAt && Date.now() - lastDiscoveryAt < DISCOVERY_REFRESH_MS) return frames;
+  if (discoveryPromise) return discoveryPromise;
+
+  discoveryPromise = (async () => {
+    let discoveryError = null;
+    for (let i = 0; i < endpoints.length; i += 1) {
+      const endpoint = endpoints[i];
+      try {
+        const discovered = await fetchSatelliteFrames(endpoint);
+        if (discovered.length) {
+          frames = discovered.slice(-MAX_CAPABILITY_FRAMES);
+          endpointIndex = i;
+          currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
+          lastError = null;
+          return frames;
+        }
+      } catch (err) {
+        discoveryError = err;
+        console.warn('EUMETView-Satellitenzeiten konnten nicht geladen werden:', endpoint, err);
+      }
+    }
+
+    // Für die aktuelle Ansicht bleibt der Layer trotzdem nutzbar, weil GetMap
+    // ohne time den neuesten verfügbaren Datensatz anfordert.
+    lastError = discoveryError;
+    return frames;
+  })().finally(() => {
+    lastDiscoveryAt = Date.now();
+    discoveryPromise = null;
+    if (enabled) setUiStatus(satelliteStatusText());
+  });
+
+  return discoveryPromise;
 }
 
 function createLayer(L, url, opacity){
@@ -259,96 +371,147 @@ function createLayer(L, url, opacity){
   });
 }
 
-function addLayerWithFallback(L, map, opacity){
-  if (!enabled) return Promise.resolve(false);
-  if (!endpoints.length) endpoints = buildEndpointList(EUMETVIEW_WMS, EUMETVIEW_WMS_FALLBACKS);
-  const endpoint = endpoints[endpointIndex] ?? DEFAULT_WMS_ENDPOINTS[0];
-  const candidate = createLayer(L, buildGetMapUrl(endpoint), opacity);
-  layer = candidate;
-
-  return new Promise(resolve => {
-    let settled = false;
-    const finish = result => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const fail = err => {
-      if (settled) return;
-      if (layer === candidate && map.hasLayer(candidate)) map.removeLayer(candidate);
-      if (layer === candidate) layer = null;
-      if (!enabled) return finish(false);
-      if (endpointIndex < endpoints.length - 1) {
-        endpointIndex += 1;
-        finish(addLayerWithFallback(L, map, opacity));
-        return;
-      }
-      lastError = err;
-      console.warn('EUMETView-Satellitenbild konnte nicht geladen werden:', err);
-      setUiStatus('nicht verfügbar');
-      finish(false);
-    };
-
-    const timer = setTimeout(() => fail(new Error(`Bild-Timeout nach ${IMAGE_TIMEOUT_MS} ms`)), IMAGE_TIMEOUT_MS);
-    candidate.once('load', () => {
-      if (!enabled || layer !== candidate) return finish(false);
-      lastError = null;
-      setUiStatus('EUMETView');
-      finish(true);
-    });
-    candidate.once('error', () => fail(new Error(`WMS-Bildfehler: ${endpoint}`)));
-    candidate.addTo(map);
-  }).then(result => result instanceof Promise ? result : result);
+function removeCurrentLayer(){
+  if (layer && currentMap?.hasLayer(layer)) currentMap.removeLayer(layer);
+  layer = null;
+  lastRequestedUrl = null;
 }
 
-export function toggle(L, map, on, opacity = 0.7){
+function endpointOrder(){
+  if (!endpoints.length) return [];
+  const order = [endpointIndex, ...endpoints.map((_, i) => i)]
+    .filter((value, index, all) => value >= 0 && value < endpoints.length && all.indexOf(value) === index);
+  return order;
+}
+
+async function addLayerWithFallback(L, map, opacity){
+  if (!enabled) return false;
+  if (!endpoints.length) endpoints = buildEndpointList(EUMETVIEW_WMS, EUMETVIEW_WMS_FALLBACKS);
+
+  let imageError = null;
+  for (const i of endpointOrder()) {
+    if (!enabled) return false;
+
+    const endpoint = endpoints[i];
+    const url = buildActiveGetMapUrl(endpoint);
+    const candidate = createLayer(L, url, opacity);
+    layer = candidate;
+
+    const loaded = await new Promise(resolve => {
+      let settled = false;
+      const finish = result => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        candidate.off('load', onLoad);
+        candidate.off('error', onError);
+        resolve(result);
+      };
+      const fail = err => {
+        imageError = err;
+        if (map.hasLayer(candidate)) map.removeLayer(candidate);
+        if (layer === candidate) layer = null;
+        finish(false);
+      };
+      const onLoad = () => finish(true);
+      const onError = () => fail(new Error(`WMS-Bildfehler: ${endpoint}`));
+      const timer = setTimeout(
+        () => fail(new Error(`Bild-Timeout nach ${IMAGE_TIMEOUT_MS} ms`)),
+        IMAGE_TIMEOUT_MS
+      );
+
+      candidate.on('load', onLoad);
+      candidate.on('error', onError);
+      candidate.addTo(map);
+    });
+
+    if (loaded && enabled && layer === candidate) {
+      endpointIndex = i;
+      lastRequestedUrl = url;
+      lastError = null;
+      setUiStatus(satelliteStatusText());
+      return true;
+    }
+  }
+
+  lastError = imageError ?? lastError;
+  console.warn('EUMETView-Satellitenbild konnte nicht geladen werden:', lastError);
+  setUiStatus('nicht verfügbar');
+  return false;
+}
+
+export async function toggle(L, map, on, opacity = 0.7){
   currentL = L;
   currentMap = map;
   currentOpacity = opacity;
   enabled = Boolean(on);
 
   if (!enabled) {
-    if (layer && map.hasLayer(layer)) map.removeLayer(layer);
-    layer = null;
+    removeCurrentLayer();
     endpointIndex = 0;
     setUiStatus('aus');
-    return Promise.resolve(false);
+    return false;
   }
 
-  if (!frames.length) {
-    frames = buildFallbackFrames();
-    currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
-  }
-  if (layer && map.hasLayer(layer)) map.removeLayer(layer);
-  layer = null;
+  if (!frames.length) frames = buildFallbackFrames();
+  removeCurrentLayer();
   endpointIndex = 0;
   setUiStatus('lädt…');
 
-  // Bild sofort lazy laden. Die teurere GetCapabilities-Ermittlung läuft davon
-  // entkoppelt und kann den Radar-/UI-Pfad nicht blockieren.
-  const imageLoad = addLayerWithFallback(L, map, opacity);
-  void loadSatellite({ discover: true }).then(() => {
-    if (!enabled || !layer) return;
-    currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
-    const endpoint = endpoints[endpointIndex] ?? DEFAULT_WMS_ENDPOINTS[0];
-    if (typeof layer.setUrl === 'function') layer.setUrl(buildGetMapUrl(endpoint));
-  });
-  return imageLoad;
+  // Historische Zeitpunkte werden weiterhin entdeckt. Für die aktuelle Ansicht
+  // ist diese Liste aber nicht mehr kritisch, weil Latest ohne time geladen wird.
+  await loadSatellite({ discover: true });
+  if (!enabled) return false;
+
+  currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
+  return addLayerWithFallback(L, map, opacity);
 }
 
 export function setOpacity(val){
   currentOpacity = val;
-  if(layer) layer.setOpacity(val);
+  if (layer) layer.setOpacity(val);
+}
+
+function watchLayerUpdate(candidate){
+  const cleanup = () => {
+    candidate.off('load', onLoad);
+    candidate.off('error', onError);
+  };
+  const onLoad = () => {
+    cleanup();
+    if (layer !== candidate) return;
+    lastError = null;
+    setUiStatus(satelliteStatusText());
+  };
+  const onError = () => {
+    cleanup();
+    if (layer !== candidate) return;
+    lastError = new Error('EUMETView-Satellitenupdate fehlgeschlagen');
+    setUiStatus('EUMETView · Updatefehler');
+  };
+  candidate.on('load', onLoad);
+  candidate.on('error', onError);
 }
 
 export function syncTo(timeUnix){
-  lastSyncTimeUnix = Number.isFinite(timeUnix) ? timeUnix : lastSyncTimeUnix;
+  if (Number.isFinite(timeUnix)) lastSyncTimeUnix = timeUnix;
   currentFrameIndex = findNearestFrameIndex(lastSyncTimeUnix);
-  if(!layer) return;
+  if (!layer) return;
+
   const endpoint = endpoints[endpointIndex] ?? DEFAULT_WMS_ENDPOINTS[0];
-  if(typeof layer.setUrl === 'function') layer.setUrl(buildGetMapUrl(endpoint));
-  else if(currentL && currentMap) void toggle(currentL, currentMap, true, currentOpacity);
+  const url = buildActiveGetMapUrl(endpoint);
+  if (url === lastRequestedUrl) {
+    setUiStatus(satelliteStatusText());
+    return;
+  }
+
+  if (typeof layer.setUrl === 'function') {
+    lastRequestedUrl = url;
+    watchLayerUpdate(layer);
+    layer.setUrl(url);
+  } else if (currentL && currentMap) {
+    void toggle(currentL, currentMap, true, currentOpacity);
+  }
 }
 
 export function getLastError(){ return lastError; }
@@ -359,15 +522,26 @@ export const __test = {
   FALLBACK_FRAME_COUNT,
   CAPABILITIES_TIMEOUT_MS,
   IMAGE_TIMEOUT_MS,
+  DISCOVERY_REFRESH_MS,
+  LATEST_REFRESH_MS,
+  CURRENT_SYNC_WINDOW_MS,
+  STALE_TIME_INDEX_MS,
   buildEndpointList,
   buildFallbackFrames,
   buildGetCapabilitiesUrl,
   buildGetMapUrl,
+  buildActiveGetMapUrl,
   expandTimeInterval,
   expandTimeList,
+  extractLayerXml,
   fetchWithTimeout,
+  findNearestFrameIndex,
   getImageConfig,
+  isNearCurrentTime,
+  latestRefreshKey,
+  normalizeIsoTime,
   normalizeWmsUrl,
   parseIsoPeriodMs,
   parseSatelliteTimes,
+  toSatelliteFrame,
 };

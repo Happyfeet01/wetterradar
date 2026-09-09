@@ -1,87 +1,136 @@
-# Wetterradar (Leaflet + RainViewer + NOAA GFS + DWD)
+# Wetterradar
 
-Interaktive Wetterkarte mit Radar, DWD/EUMETSAT-Satellitenbild, Wind-Partikelfeld und DWD-Warngebieten (CAP-Polygone). Leichtgewichtig mit Leaflet und Vanilla-JS.
+Leichtgewichtige Wetterkarte mit Leaflet und Vanilla-JS. Die öffentliche Instanz läuft unter https://wetter.larsmueller.net.
 
-Nutzbar unter https://wetter.larsmueller.net
+## Funktionen
 
-Kaffeekasse: https://www.paypal.me/LarsM1980
-
-https://de.liberapay.com/Esmuellerthier/
-
-## Features
-
-- **Niederschlagsradar (RainViewer)**
-  *Vergangenheit + Nowcast* (kurzfristige Vorhersage), animiert über Time-Slider.
-- **Satellitenbild (DWD/EUMETSAT)**
-  Aktuelles Meteosat-Europabild aus dem DWD-GeoServer (`dwd:Satellite_meteosat_1km_euat_rgb_day_hrv_and_night_ir108_3h`); ein-/ausblendbar, Opazität regelbar. Der lokale Proxy `/dwd/sat/wms` wird zuerst genutzt, danach direkte DWD-Fallbacks.
-- **Wind-Partikelfeld (leaflet-velocity)**
-  Vektorfeld aus **NOAA/NCEP GFS 1.0° (10 m Wind)** via NOMADS-Filter, als animierte Partikel (east/north-Komponenten).
-- **DWD-Warnungen**
-  Parsing des **CAP-Feeds**: Polygone/Kreise als Leaflet-Overlays, farbcodiert nach Severity; Warnliste in Panel.
-- **UI/Controls**
-  Layer-Toggles, Opazitäts-Slider, Farbschema, „Smooth“, Play/Pause, Zeitsprung, Legende, Zeitstempel.
+- **Niederschlagsradar:** RainViewer-Past-Frames, animierbar über Vor/Zurück und Play. RainViewer bietet im verwendeten Free-Tier keinen Nowcast mehr.
+- **Satellit:** EUMETSAT / EUMETView, Layer `mtg_fd:rgb_geocolour`. Die verfügbaren WMS-Zeitpunkte werden per `GetCapabilities` ermittelt und mit der Radar-Zeitachse synchronisiert.
+- **Windströmung:** animiertes 10-m-Windfeld mit `leaflet-velocity`. Das Frontend lädt `/wind/current.json`, schneidet das Feld auf den Kartenausschnitt zu und revalidiert aktive Winddaten alle 15 Minuten.
+- **Warnungen:** DWD sowie BBK/NINA.
+- **Pegelstände:** PEGELONLINE / WSV.
+- **Standort:** Geolokalisierung plus aktuelle Windinformation von Open-Meteo.
+- **Darstellung:** helle/dunkle Grundkarte, Radar- und Satelliten-Deckkraft, Zeitsteuerung.
 
 ## Datenquellen
 
-- **RainViewer Weather Maps API** – Niederschlagsradar (Tiles + Frames)
-- **DWD/EUMETSAT Satellit** – Meteosat-Europabild per DWD-WMS; Open-Data-Rohprodukte liegen ergänzend unter `https://opendata.dwd.de/weather/satellite/`
-- **NOAA/NCEP GFS via NOMADS** – Windgeschwindigkeit/-richtung (10 m)
-- **DWD CAP/JSON** – amtliche Warnungen (Polygone + Metadaten)
+- RainViewer Weather Maps API – Niederschlagsradar
+- EUMETSAT EUMETView – Satellitenbild
+- NOAA/NCEP GFS via NOMADS – serverseitig erzeugtes Wind-Vektorfeld
+- Open-Meteo – punktuelle Windinformation am gewählten Standort
+- DWD – amtliche Wetterwarnungen
+- BBK/NINA – Bevölkerungsschutz-Warnungen
+- PEGELONLINE / WSV – Pegelstände
+- OpenStreetMap – Basiskarte
 
-> Hinweis zu Satellitendaten: Der Frontend-Layer nutzt den DWD-WMS als Bild-/Darstellungsdienst. Die Open-Data-Verzeichnisse (`/weather/satellite/clouds/`, `/weather/satellite/radiation/`) stellen Rohprodukte wie komprimierte NetCDF-Dateien bereit und sind eher für serverseitige Verarbeitung geeignet. Bei Weiterverarbeitung bitte die Quellenangabe „EUMETSAT / DWD“ bzw. „Datenbasis: Deutscher Wetterdienst (DWD)“ beibehalten.
+## Satelliten-Layer
 
-## Verzeichnis­struktur
+Das Frontend verwendet den EUMETView-WMS über den Same-Origin-Proxy `/eumetview/wms`. Der aktuelle Layer ist:
 
-├─ index.html
-├─ css/
-├─ js/
-│ ├─ app.js # Bootstrapping, Konfiguration, Wiring der Module
-│ ├─ map.js # Leaflet-Karte (OSM)
-│ ├─ radar.js # RainViewer Radar + Animation/Timeline
-│ ├─ satellite.js # DWD/EUMETSAT-Satellitenbild per WMS + Fallbacks
-│ ├─ wind_particles.js # leaflet-velocity + NOAA-GFS-Sampling
-│ ├─ warnings.js # DWD JSON-Liste + CAP-Polygone als Overlays
-│ └─ utils.js # Helfer (Fetch/Proxy, DOM, Formatierungen, Legend)
-├─ etc/nginx/sites-available/ # Beispiel-Nginx-Config (optional)
-├─ blitz-proxy.js # Mini-Proxy-Script (optional)
-├─ package.json
-└─ README.md
-
-## Windströmungsdaten (`/wind/current.json`)
-
-- **Veröffentlichter Endpunkt:** Das Leaflet-Velocity-Overlay lädt seine Vektordaten aus `https://<host>/wind/current.json`. Im Repo liegt ein synthetisches Platzhalterfeld (`wind/current.json`), damit der Endpunkt auch ohne laufenden Fetcher gültige Metadaten liefert.
-- **Fetcher:** `tools/noaa-wind-fetcher.js` lädt den jeweils aktuellsten GFS-Analyse-Lauf (10 m Wind, 1.0°-Raster) als GRIB2 via NOMADS-Filter, konvertiert ihn mit `@weacast/grib2json` und schreibt die U/V-Komponenten im Leaflet-Velocity-Format nach `/var/www/wetterradar/wind/current.json` (und bei Erfolg zusätzlich `fallback.json`).
-- **Aufruf:**
-  - Einmalige Aktualisierung (z. B. manuell oder in CI): `node tools/noaa-wind-fetcher.js`
-- **Abhängigkeiten:** Node.js + npm sowie Java-Laufzeit (für `@weacast/grib2json`, z. B. `default-jre-headless`).
-
-### systemd-Service + Timer
-
-Die mitgelieferten Units automatisieren den Abruf zu den offiziellen GFS-Zyklen (00/06/12/18 UTC):
-
+```text
+mtg_fd:rgb_geocolour
 ```
+
+`js/satellite.js` hält Satellitenframes einheitlich als Objekte mit Unix-Zeit und ISO-Zeit. Damit kann ein RainViewer-Radarframe dem zeitlich nächsten verfügbaren Satellitenbild zugeordnet werden.
+
+Der Satelliten-Layer wird lazy geladen. Ist er eingeschaltet, werden die verfügbaren EUMetView-Zeitpunkte während einer längeren Sitzung regelmäßig neu ermittelt.
+
+## Windströmung
+
+### Frontend
+
+`js/windflow.js` lädt zuerst:
+
+```text
+/wind/current.json
+```
+
+und verwendet bei einem Fehler:
+
+```text
+/wind/fallback.json
+```
+
+Während der Layer aktiv ist, wird `current.json` alle 15 Minuten revalidiert. Der laufende Partikelfilm wird nur bei einem neuen Dataset oder einem geänderten Kartenausschnitt aktualisiert. Dafür wird – sofern verfügbar – `leaflet-velocity#setData()` verwendet, statt den kompletten Layer ständig zu entfernen und neu zu erzeugen.
+
+Der angezeigte Zeitstempel stammt aus `meta.datasetTime`, also aus dem tatsächlichen Modellzeitpunkt und nicht nur aus dem Zeitpunkt, zu dem die JSON-Datei geschrieben wurde.
+
+### Server: NOAA/NCEP GFS
+
+Der kanonische Fetcher ist:
+
+```bash
+node tools/noaa-wind-fetcher.js
+```
+
+oder über npm:
+
+```bash
+npm run wind:once
+```
+
+Er lädt 10-m-U/V-Wind aus dem NOAA/NCEP-GFS-1°-Raster über NOMADS, konvertiert GRIB2 mit `@weacast/grib2json` und schreibt atomar:
+
+```text
+/var/www/wetterradar/wind/current.json
+/var/www/wetterradar/wind/fallback.json
+```
+
+Benötigt werden Node.js, die npm-Abhängigkeiten und eine Java-Laufzeit für `grib2json`.
+
+### systemd
+
+```bash
+sudo mkdir -p /var/lib/wetterradar/noaa-wind /var/www/wetterradar/wind
+sudo chown -R www-data:www-data /var/lib/wetterradar /var/www/wetterradar/wind
+
+sudo cp systemd/wetterradar-noaa-wind.service /etc/systemd/system/
+sudo cp systemd/wetterradar-noaa-wind.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now wetterradar-noaa-wind.timer
+```
+
+Der Timer arbeitet ausdrücklich in **UTC**. Die GFS-Läufe haben die Zyklen 00/06/12/18 UTC; der Abruf erfolgt erst einige Stunden später und wird einmal wiederholt, damit ein noch nicht vollständig veröffentlichter NOMADS-Lauf nicht dazu führt, dass sechs Stunden lang ein alter Datensatz stehen bleibt.
+
+Status prüfen:
+
+```bash
 systemctl status wetterradar-noaa-wind.timer
+systemctl list-timers wetterradar-noaa-wind.timer
+journalctl -u wetterradar-noaa-wind.service -n 100 --no-pager
+jq '.meta.datasetTime,.meta.updatedAt,.meta.source,.meta.grid' /var/www/wetterradar/wind/current.json
 ```
 
-Installation (als root):
+Die älteren Dateien `wind-fetcher.js`, `wind-fetcher-consistent.js` und Units unter `etc/systemd/system/` stammen aus früheren Open-Meteo-Varianten. Für neue Installationen ist ausschließlich `tools/noaa-wind-fetcher.js` plus `systemd/wetterradar-noaa-wind.*` vorgesehen.
 
+## Nginx
+
+Eine Beispielkonfiguration liegt unter:
+
+```text
+etc/nginx/sites-available/wetter.domain.tld
 ```
-cp systemd/wetterradar-noaa-wind.service /etc/systemd/system/
-cp systemd/wetterradar-noaa-wind.timer /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now wetterradar-noaa-wind.timer
+
+Wichtige lokale Endpunkte:
+
+- `/rainviewer/weather-maps.json` – Same-Origin-Proxy für RainViewer-Metadaten
+- `/eumetview/wms` – Same-Origin-Proxy für EUMETView
+- `/wind/current.json` und `/wind/fallback.json` – statische Winddaten
+- `/dwd/warnings.json` – DWD-Warnungen
+- `/nina/` – NINA/BBK-Proxy
+
+Für `/wind/` ist ein kurzer Browsercache sinnvoll; das Frontend revalidiert die Datei und lädt sie nicht blind bei jeder Kartenbewegung neu.
+
+## Tests
+
+```bash
+npm test
 ```
 
-## Deployment-Hinweise
+Die Tests decken unter anderem Radar-Laden, EUMETView-Zeitachsen, Wind-Cropping, Dataset-Versionen und Request-Timeouts ab. GitHub Actions führt die Tests bei Pull Requests und auf `fix/**`-Branches aus.
 
-- Beim Upload/Sync der statischen Seite muss der neue Ordner `wind/` mitgenommen werden (z. B. `rsync -av --delete css js wind index.html …`).
-- Auf dem Server sollten Schreibrechte für den Fetcher auf `/var/www/wetterradar/wind/current.json` bestehen.
-- Die Beispiel-Nginx-Config (siehe `etc/nginx/sites-available/wetter.domain.tld`) enthält einen Location-Block für `/wind/`, der Caching + CORS-Header setzt.
-- RainViewer `weather-maps.json` wird serverseitig via Nginx unter `/rainviewer/weather-maps.json` auf `https://api.rainviewer.com/public/weather-maps.json` proxied, damit das Frontend sie same-origin laden kann.
-- Für den DWD-Satellitenlayer sollte `/dwd/sat/wms` auf `https://maps.dwd.de/geoserver/wms` zeigen und bei 5xx-Fehlern ein valides Bild (z. B. `empty_gif`) ausliefern, damit Tile-Rendering im Browser stabil bleibt. Falls der Proxy nicht verfügbar ist, fällt das Frontend automatisch auf `maps.dwd.de` und `brz-maps.dwd.de` zurück.
+## Unterstützung
 
-## Lokale Entwicklung & Kurztest
+Kaffeekasse: https://www.paypal.me/LarsM1980
 
-- Einfacher Start: `python -m http.server 8000` im Repo-Root oder `npx http-server . -p 8000` (optional `npm install` für http-server).
-- Im Bedienpanel den Toggle **„Niederschlagstyp“** aktivieren. Ein Badge „PrecipType: ON“ bestätigt den Modus, die kleine Legende zeigt Regen (dunkelblau) vs. Schnee (hellblau).
-- Visuelle Prüfung: Bei aktiven Schneesignalen liefert RainViewer (mit `snow=1`) hellblaue Flächen für Schnee, Regen bleibt dunkelblau/grün je nach Farbschema. Ohne Schneefall bleibt die Ansicht wie zuvor; zur Kontrolle kann der Badge genutzt werden.
+Liberapay: https://de.liberapay.com/Esmuellerthier/
