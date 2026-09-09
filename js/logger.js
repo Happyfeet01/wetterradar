@@ -2,6 +2,7 @@ const LOG_ENDPOINT = '/client-log';
 const FLUSH_INTERVAL_MS = 3000;
 const MAX_QUEUE = 100;
 const MAX_RECENT = 200;
+const MAX_STRING = 4000;
 const SAFE_QUERY_KEYS = new Set(['service','request','layers','layer','time','_refresh','version','format','styles','crs','bbox','width','height']);
 
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
@@ -22,13 +23,18 @@ const sessionId = makeSessionId();
 
 function errorToObject(err){
   if (!err) return null;
-  if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack };
+  if (err instanceof Error) return {
+    name: String(err.name || 'Error').slice(0, 120),
+    message: String(err.message || '').slice(0, MAX_STRING),
+    stack: String(err.stack || '').slice(0, 12000),
+  };
   return null;
 }
 
 function safeValue(value, depth = 0){
   if (depth > 3) return '[depth-limit]';
-  if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.slice(0, MAX_STRING);
   const asError = errorToObject(value);
   if (asError) return asError;
   if (Array.isArray(value)) return value.slice(0, 20).map(item => safeValue(item, depth + 1));
@@ -40,7 +46,7 @@ function safeValue(value, depth = 0){
     }
     return out;
   }
-  return String(value);
+  return String(value).slice(0, MAX_STRING);
 }
 
 export function sanitizeUrl(input){
@@ -152,12 +158,25 @@ function installConsoleCapture(){
   }
 }
 
+function responseHeaders(res){
+  const names = ['content-type','cache-control','age','etag','last-modified','x-wetter-cache','x-wetter-upstream'];
+  const out = {};
+  for (const name of names) {
+    const value = res?.headers?.get?.(name);
+    if (value != null) out[name] = value;
+  }
+  return out;
+}
+
 function installFetchCapture(){
   if (fetchInstalled || typeof window === 'undefined' || !nativeFetch) return;
   fetchInstalled = true;
   window.fetch = async (input, init = {}) => {
     const url = sanitizeUrl(input);
-    if (new URL(url, location.href).pathname === LOG_ENDPOINT) return nativeFetch(input, init);
+    let pathname = '';
+    try { pathname = new URL(url, location.href).pathname; } catch {}
+    if (pathname === LOG_ENDPOINT) return nativeFetch(input, init);
+
     const started = performance.now();
     const method = String(init?.method || (typeof input === 'object' && input?.method) || 'GET').toUpperCase();
     logger.debug('network', 'fetch.start', { method, url });
@@ -165,18 +184,34 @@ function installFetchCapture(){
       const res = await nativeFetch(input, init);
       const durationMs = Math.round(performance.now() - started);
       const level = res.ok ? 'debug' : 'warn';
-      log(level, 'network', 'fetch.end', { method, url, status: res.status, ok: res.ok, durationMs });
+      log(level, 'network', 'fetch.end', {
+        method,
+        url,
+        status: res.status,
+        ok: res.ok,
+        durationMs,
+        headers: responseHeaders(res),
+      });
       return res;
     } catch (err) {
-      logger.error('network', 'fetch.error', { method, url, durationMs: Math.round(performance.now() - started), error: err });
+      logger.error('network', 'fetch.error', {
+        method,
+        url,
+        durationMs: Math.round(performance.now() - started),
+        error: err,
+      });
       throw err;
     }
   };
 }
 
 function layerKind(layer){
-  const name = layer?.constructor?.name;
-  return name || 'LeafletLayer';
+  return layer?.constructor?.name || 'LeafletLayer';
+}
+
+function layerUrl(layer){
+  const raw = layer?._url || layer?._src || null;
+  return raw ? sanitizeUrl(raw) : null;
 }
 
 export function bindLeafletLogging(map){
@@ -192,22 +227,59 @@ export function bindLeafletLogging(map){
     if (!layer || observed.has(layer)) return;
     observed.add(layer);
     const kind = layerKind(layer);
+    const url = layerUrl(layer);
+    const isTileLayer = typeof layer.getTileUrl === 'function';
+
     if (typeof layer.on === 'function') {
       layer.on('tileerror', ev => logger.error('leaflet', 'tile.error', {
         layer: kind,
-        url: sanitizeUrl(ev?.tile?.src || ''),
+        url: sanitizeUrl(ev?.tile?.src || url || ''),
         coords: ev?.coords ?? null,
         error: ev?.error ?? null,
       }));
-      layer.on('error', ev => logger.error('leaflet', 'layer.error', { layer: kind, error: ev?.error ?? ev ?? null }));
+      layer.on('error', ev => logger.error('leaflet', 'layer.error', {
+        layer: kind,
+        url,
+        error: ev?.error ?? ev ?? null,
+      }));
+      if (!isTileLayer && url) {
+        layer.on('load', () => logger.info('leaflet', 'image.load', { layer: kind, url: layerUrl(layer) || url }));
+      }
     }
   };
 
   map.eachLayer?.(observeLayer);
-  map.on('layeradd', ev => { observeLayer(ev.layer); logger.debug('leaflet', 'layer.add', { layer: layerKind(ev.layer) }); });
-  map.on('layerremove', ev => logger.debug('leaflet', 'layer.remove', { layer: layerKind(ev.layer) }));
+  map.on('layeradd', ev => {
+    observeLayer(ev.layer);
+    logger.debug('leaflet', 'layer.add', { layer: layerKind(ev.layer), url: layerUrl(ev.layer) });
+  });
+  map.on('layerremove', ev => logger.debug('leaflet', 'layer.remove', { layer: layerKind(ev.layer), url: layerUrl(ev.layer) }));
   map.on('zoomend', () => logger.debug('leaflet', 'map.zoom', { zoom: map.getZoom?.() }));
   map.on('moveend', () => logger.debug('leaflet', 'map.move', { center: map.getCenter?.(), zoom: map.getZoom?.() }));
+}
+
+function installResourceErrorCapture(){
+  window.addEventListener('error', ev => {
+    const target = ev.target;
+    if (target && target !== window) {
+      const resourceUrl = target.currentSrc || target.src || target.href || null;
+      if (resourceUrl) {
+        logger.error('browser', 'resource.error', {
+          tag: target.tagName || null,
+          url: sanitizeUrl(resourceUrl),
+        });
+        return;
+      }
+    }
+
+    logger.error('browser', 'window.error', {
+      message: ev.message,
+      filename: sanitizeUrl(ev.filename || ''),
+      lineno: ev.lineno,
+      colno: ev.colno,
+      error: ev.error,
+    });
+  }, true);
 }
 
 export function installGlobalLogging(){
@@ -215,14 +287,8 @@ export function installGlobalLogging(){
   installed = true;
   installConsoleCapture();
   installFetchCapture();
+  installResourceErrorCapture();
 
-  window.addEventListener('error', ev => logger.error('browser', 'window.error', {
-    message: ev.message,
-    filename: sanitizeUrl(ev.filename || ''),
-    lineno: ev.lineno,
-    colno: ev.colno,
-    error: ev.error,
-  }));
   window.addEventListener('unhandledrejection', ev => logger.error('browser', 'unhandledrejection', { reason: ev.reason }));
   window.addEventListener('pagehide', () => { void flushLogs({ beacon: true }); });
   window.addEventListener('online', () => logger.info('browser', 'online'));
@@ -232,10 +298,11 @@ export function installGlobalLogging(){
     userAgent: navigator?.userAgent ?? null,
     language: navigator?.language ?? null,
     online: navigator?.onLine ?? null,
+    viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio || 1 },
   });
 }
 
 export function getRecentLogs(){ return recent.slice(); }
 export function getSessionId(){ return sessionId; }
 
-export const __test = { safeValue, makeRecord };
+export const __test = { safeValue, makeRecord, responseHeaders, layerUrl };
