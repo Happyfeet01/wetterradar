@@ -24,7 +24,7 @@ function applyDarkMode(enabled){
 const $ = id => document.getElementById(id);
 const ui = {
   btnPrev:$('btnPrev'), btnNext:$('btnNext'), btnPlay:$('btnPlay'), lblTime:$('lblTime'), btnLocate:$('btnLocate'), lblLocationWind:$('lblLocationWind'),
-  selColor:$('selColor'), chkSmooth:$('chkSmooth'), rngSpeed:$('rngSpeed'), rngOpacity:$('rngOpacity'), lblOpacity:$('lblOpacity'),
+  selColor:$('selColor'), chkSmooth:$('chkSmooth'), rngSpeed:$('rngSpeed'), lblSpeed:$('lblSpeed'), rngOpacity:$('rngOpacity'), lblOpacity:$('lblOpacity'),
   chkClouds:$('chkClouds'), rngClouds:$('rngClouds'), lblClouds:$('lblClouds'), chkWarn:$('chkWarn'), chkWarnList:$('chkWarnList'), chkDark:$('chkDark'),
   chkWindFlow:$('chkWindFlow'), selWindRegion:$('selWindRegion'), lblWindFlowInfo:$('lblWindFlowInfo'),
   chkWaterLevels:$('chkWaterLevels'), lblWaterLevelsInfo:$('lblWaterLevelsInfo'), controlPanel:$('controlPanel'), btnPanelToggle:$('btnPanelToggle'),
@@ -51,11 +51,19 @@ async function boot(){
   Radar.paint(L,map,ui,syncClouds);
 
   let playing=false, timer=null;
-  const stepMs=()=>Math.max(Number(ui.rngSpeed.value),PLAY_FADE_MS+80);
+  // Slider nach rechts = schneller. Der Range-Wert wird deshalb in eine
+  // Bildwechsel-Verzögerung umgerechnet (200..1200 -> 1200..200 ms).
+  const stepMs=()=>Math.max(1400-Number(ui.rngSpeed.value),PLAY_FADE_MS+80);
+  const updateSpeedLabel=()=>{
+    if(!ui.lblSpeed) return;
+    ui.lblSpeed.textContent=`${(stepMs()/1000).toLocaleString('de-DE',{minimumFractionDigits:1,maximumFractionDigits:1})} s/Bild`;
+  };
+  updateSpeedLabel();
+
   ui.btnPrev.onclick=()=>{Radar.step(-1);Radar.paint(L,map,ui,syncClouds);};
   ui.btnNext.onclick=()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);};
   ui.btnPlay.onclick=()=>{ playing=!playing; ui.btnPlay.textContent=playing?'⏸':'▶︎'; if(playing) timer=setInterval(()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);},stepMs()); else clearInterval(timer); };
-  ui.rngSpeed.oninput=()=>{if(playing){clearInterval(timer);timer=setInterval(()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);},stepMs());}};
+  ui.rngSpeed.oninput=()=>{updateSpeedLabel();if(playing){clearInterval(timer);timer=setInterval(()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);},stepMs());}};
   ui.rngOpacity.oninput=()=>{const opacity=Number(ui.rngOpacity.value);ui.lblOpacity.textContent=Math.round(opacity*100)+'%';Radar.setOpacity(opacity);};
   ui.selColor.onchange=()=>Radar.paint(L,map,ui,syncClouds); ui.chkSmooth.onchange=()=>Radar.paint(L,map,ui,syncClouds);
   ui.chkClouds.onchange=()=>{void Sat.toggle(L,map,ui.chkClouds.checked,Number(ui.rngClouds.value));};
@@ -74,9 +82,6 @@ async function boot(){
   ui.btnLocate.onclick=()=>{if(!navigator.geolocation){showWindError('Standortbestimmung nicht unterstützt');alert('Geolokalisierung wird von diesem Browser nicht unterstützt.');return;}ui.btnLocate.disabled=true;showWindLoading();navigator.geolocation.getCurrentPosition(async pos=>{const{latitude,longitude,accuracy}=pos.coords;const zoom=accuracy<=50?14:accuracy<=150?12:accuracy<=1000?10:9;map.setView([latitude,longitude],Math.min(zoom,map.getMaxZoom()));updateAccuracyCircle(latitude,longitude,accuracy);const marker=updateLocationMarker(latitude,longitude,null);try{const wind=await fetchWindInfo(latitude,longitude);updateLocationMarker(latitude,longitude,wind.direction??null);updateWindTooltip(marker,wind);showWindInfo(wind);}catch(err){console.warn('Winddaten konnten nicht geladen werden:',err);updateWindTooltip(marker,null);showWindError();}finally{ui.btnLocate.disabled=false;}},err=>{console.warn('Geolokalisierung fehlgeschlagen:',err);ui.btnLocate.disabled=false;showWindError('Standort nicht verfügbar');},{enableHighAccuracy:true,maximumAge:120000,timeout:15000});};
 
   Radar.paint(L,map,ui,syncClouds);
-  const marker=document.getElementById('currentTimeMarker');
-  const updateCurrentMarker=()=>{const frames=Radar.getFrames();const frame=frames[Radar.getIndex()];const now=Date.now()/1000;if(marker)marker.style.display=frame&&Math.abs(frame.time-now)<15*60?'block':'none';};
-  updateCurrentMarker();
 
   setInterval(async()=>{
     await Radar.loadRadar();
@@ -87,7 +92,6 @@ async function boot(){
     const current=frames[Radar.getIndex()];
     if(current)syncClouds(current.time);
     Radar.paint(L,map,ui,syncClouds);
-    updateCurrentMarker();
   },5*60*1000);
 }
 boot();
