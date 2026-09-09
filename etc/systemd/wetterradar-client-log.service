@@ -1,0 +1,24 @@
+[Unit]
+Description=Wetterradar browser diagnostics receiver
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/wetterradar
+Environment=CLIENT_LOG_HOST=127.0.0.1
+Environment=CLIENT_LOG_PORT=9044
+Environment=CLIENT_LOG_FILE=/var/log/wetterradar/client.log
+ExecStart=/usr/bin/node /var/www/wetterradar/tools/client-log-server.js
+Restart=on-failure
+RestartSec=3s
+LogsDirectory=wetterradar
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/wetterradar
+
+[Install]
+WantedBy=multi-user.target

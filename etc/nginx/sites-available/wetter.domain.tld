@@ -1,4 +1,9 @@
 proxy_cache_path /var/cache/nginx/dwd levels=1:2 keys_zone=dwdcache:10m inactive=10m max_size=100m;
+limit_req_zone $binary_remote_addr zone=wetter_clientlog:10m rate=30r/m;
+
+# Satelliten-Diagnose bewusst ohne IP/User-Agent. So sehen wir Cache, Upstream,
+# Laufzeit und WMS-Parameter, ohne zusätzliche personenbezogene Daten zu sammeln.
+log_format wetter_satellite '$time_iso8601 status=$status upstream=$upstream_status cache=$upstream_cache_status rt=$request_time urt=$upstream_response_time bytes=$body_bytes_sent args="$args" ct="$sent_http_content_type"';
 
 # HTTP → HTTPS Weiterleitung (v4/v6)
 server {
@@ -77,10 +82,12 @@ server {
         add_header Cache-Control "no-cache";
     }
 
-    # statische Assets (Leaflet via CDN bleibt extern gecacht)
+    # JS/CSS werden absichtlich revalidiert. Die Dateien tragen keine gehashten
+    # Namen; "immutable" würde daher nach einem Deploy bis zu 7 Tage alten Code
+    # im Browser festhalten (besonders fatal bei satellite.js/app.js).
     location ~* \.(?:css|js)$ {
         etag on;
-        add_header Cache-Control "public, max-age=604800, immutable";
+        add_header Cache-Control "no-cache";
     }
 
     location ~* \.(?:png|jpg|jpeg|gif|webp|ico|svg)$ {
@@ -95,6 +102,27 @@ server {
         add_header Access-Control-Allow-Origin *;
         add_header Cache-Control "public, max-age=120, stale-while-revalidate=600";
         try_files $uri =404;
+    }
+
+    # --- Browser-/Leaflet-Diagnose ---
+    # Der Empfänger schreibt JSONL nach /var/log/wetterradar/client.log.
+    # Keine Client-IP wird an den lokalen Dienst weitergereicht.
+    location = /client-log {
+        client_max_body_size 128k;
+        limit_req zone=wetter_clientlog burst=20 nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://127.0.0.1:9044/client-log;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 5s;
+        proxy_send_timeout 5s;
+
+        add_header Cache-Control "no-store" always;
+        access_log off;
     }
 
     # --- EUMETView Satellit WMS (same-origin, lazy im Frontend) ---
@@ -120,8 +148,13 @@ server {
         proxy_cache_valid any 1m;
         proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
 
+        # Für die aktuelle Fehlersuche: Cache-/Upstream-Zustand sowohl als Header
+        # als auch in einer eigenen, IP-freien Logdatei sichtbar machen.
+        add_header X-Wetter-Cache $upstream_cache_status always;
+        add_header X-Wetter-Upstream $upstream_status always;
         add_header Access-Control-Allow-Origin * always;
         add_header Cache-Control "public, max-age=300, stale-while-revalidate=600" always;
+        access_log /var/log/nginx/wetter-satellite.access.log wetter_satellite;
     }
 
     # Alter DWD-Satellitenproxy bleibt vorerst als rückwärtskompatibler Fallback

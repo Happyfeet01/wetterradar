@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test js/*.test.js",
+    "logs:serve": "node tools/client-log-server.js",
     "wind:once": "node tools/noaa-wind-fetcher.js",
     "wind:legacy:openmeteo": "node wind-fetcher.js"
   },

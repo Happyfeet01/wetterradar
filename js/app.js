@@ -1,12 +1,16 @@
 import { OSM_ATTRIB, OSM_DARK_ATTRIB, OSM_DARK_URL, OSM_URL, PLAY_FADE_MS } from './config.js';
 import * as Radar from './radar.js';
-import * as Sat from './satellite.js';
+import * as Sat from './satellite.js?v=20260909-1';
 import { bind as bindWarnings } from './warnings.js';
 import { bindWindFlow } from './windflow.js';
 import { bindTemperature } from './temperature.js';
 import { bindWaterLevels } from './waterlevels.js';
+import { bindLeafletLogging, installGlobalLogging, logger } from './logger.js';
+
+installGlobalLogging();
 
 const map = L.map('map', { zoomSnap:0.5, worldCopyJump:true, maxZoom:10 }).setView([51.2,10.5], 6);
+bindLeafletLogging(map);
 const baseTiles = {
   light: L.tileLayer(OSM_URL, { maxZoom:19, attribution:OSM_ATTRIB }),
   dark: L.tileLayer(OSM_DARK_URL, { maxZoom:19, attribution:OSM_DARK_ATTRIB }),
@@ -46,7 +50,9 @@ if(ui.btnPanelToggle && ui.controlPanel){
 function syncClouds(timeUnix){ Sat.syncTo(timeUnix); }
 
 async function boot(){
+  logger.info('app', 'boot.start');
   await Radar.loadRadar();
+  logger.info('radar', 'initial.load', { frames: Radar.getFrames().length, error: Radar.getLastError?.() ?? null });
   await Sat.loadSatellite();
   Radar.paint(L,map,ui,syncClouds);
 
@@ -66,7 +72,12 @@ async function boot(){
   ui.rngSpeed.oninput=()=>{updateSpeedLabel();if(playing){clearInterval(timer);timer=setInterval(()=>{Radar.step(+1);Radar.paint(L,map,ui,syncClouds);},stepMs());}};
   ui.rngOpacity.oninput=()=>{const opacity=Number(ui.rngOpacity.value);ui.lblOpacity.textContent=Math.round(opacity*100)+'%';Radar.setOpacity(opacity);};
   ui.selColor.onchange=()=>Radar.paint(L,map,ui,syncClouds); ui.chkSmooth.onchange=()=>Radar.paint(L,map,ui,syncClouds);
-  ui.chkClouds.onchange=()=>{void Sat.toggle(L,map,ui.chkClouds.checked,Number(ui.rngClouds.value));};
+  ui.chkClouds.onchange=()=>{
+    logger.info('satellite', 'toggle', { enabled: ui.chkClouds.checked, opacity: Number(ui.rngClouds.value) });
+    void Sat.toggle(L,map,ui.chkClouds.checked,Number(ui.rngClouds.value)).then(ok => {
+      logger.info('satellite', 'toggle.result', { enabled: ui.chkClouds.checked, ok, error: Sat.getLastError?.() ?? null });
+    });
+  };
   ui.rngClouds.oninput=()=>{ui.lblClouds.textContent=Math.round(Number(ui.rngClouds.value)*100)+'%';Sat.setOpacity(Number(ui.rngClouds.value));};
   ui.chkDark.onchange=()=>applyDarkMode(ui.chkDark.checked); applyDarkMode(ui.chkDark.checked);
 
@@ -85,13 +96,24 @@ async function boot(){
 
   setInterval(async()=>{
     await Radar.loadRadar();
-    // GetCapabilities ist relativ teuer und wird nur erneuert, solange der
-    // Satelliten-Layer tatsächlich aktiv ist. satellite.js drosselt zusätzlich.
     if(ui.chkClouds.checked) await Sat.loadSatellite({discover:true});
     const frames=Radar.getFrames();
     const current=frames[Radar.getIndex()];
     if(current)syncClouds(current.time);
     Radar.paint(L,map,ui,syncClouds);
+    logger.debug('app', 'periodic.refresh', {
+      radarFrames: frames.length,
+      radarTime: current?.time ?? null,
+      satelliteEnabled: ui.chkClouds.checked,
+      radarError: Radar.getLastError?.() ?? null,
+      satelliteError: Sat.getLastError?.() ?? null,
+    });
   },5*60*1000);
+
+  logger.info('app', 'boot.ready', { leaflet: L.version, radarFrames: Radar.getFrames().length });
 }
-boot();
+
+boot().catch(err=>{
+  logger.error('app', 'boot.failed', { error: err });
+  console.error('Wetterradar konnte nicht gestartet werden:', err);
+});
