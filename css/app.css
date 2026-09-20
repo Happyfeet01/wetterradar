@@ -63,8 +63,53 @@ body.dark .panel-toggle{background:rgba(255,255,255,0.12);}
 .row label{white-space:nowrap;font-weight:600}
 .grow{flex:1 1 auto}
 .hint{font-size:12px;color:var(--fg-hint)}
+.hint.is-error{color:#c62828;font-weight:700}
+body.dark .hint.is-error{color:#ff8a80}
 .badge{display:inline-block;padding:2px 6px;border-radius:6px;font-size:12px;background:#eef;color:#223}
 body.dark .badge{background:rgba(33,150,243,0.35);color:#e3f2fd;}
+.visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+.location-search input{
+  min-width:150px;
+  padding:6px 8px;
+  border:1px solid rgba(0,0,0,.22);
+  border-radius:6px;
+  background:#fff;
+  color:#222;
+}
+.location-search button{padding:6px 10px;cursor:pointer}
+.location-search .hint{flex-basis:100%}
+body.dark .location-search input{background:#20242b;color:#f2f2f2;border-color:rgba(255,255,255,.25)}
+
+/* Punktuelle DWD-Prognose */
+.forecast-popup .leaflet-popup-content{margin:12px 14px;min-width:290px;max-width:min(480px,80vw)}
+.forecast-card{font:13px/1.35 system-ui,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;color:#222}
+.forecast-card__header{display:flex;align-items:center;gap:10px;margin-bottom:5px}
+.forecast-card__header>div{display:flex;flex:1;min-width:0;flex-direction:column}
+.forecast-card__header strong:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.forecast-card__header small{color:#666}
+.forecast-card__current-icon{font-size:24px}
+.forecast-card__temperature{font-size:19px;white-space:nowrap}
+.forecast-card__current{padding:7px 8px;margin-bottom:8px;border-radius:7px;background:#eef5fb}
+.forecast-days{list-style:none;padding:0;margin:0;display:grid;gap:2px}
+.forecast-day{display:grid;grid-template-columns:42px 26px 72px minmax(118px,1fr) 92px;align-items:center;gap:5px;padding:5px 2px;border-top:1px solid #e1e1e1;white-space:nowrap}
+.forecast-day__name{font-weight:700}
+.forecast-day__icon{font-size:18px;text-align:center}
+.forecast-day__temp{font-weight:700}
+.forecast-card footer{margin-top:7px;color:#666;font-size:11px}
+.forecast-loading,.forecast-error{padding:12px;font:600 13px system-ui}
+.forecast-error{color:#b71c1c}
+body.dark .forecast-popup .leaflet-popup-content-wrapper,body.dark .forecast-popup .leaflet-popup-tip{background:#20242b;color:#f2f2f2}
+body.dark .forecast-card{color:#f2f2f2}
+body.dark .forecast-card__header small,body.dark .forecast-card footer{color:#bbb}
+body.dark .forecast-card__current{background:rgba(33,150,243,.18)}
+body.dark .forecast-day{border-color:rgba(255,255,255,.13)}
+body.dark .forecast-error{color:#ff8a80}
+
+@media (max-width:620px){
+  .forecast-popup .leaflet-popup-content{min-width:min(290px,72vw)}
+  .forecast-day{grid-template-columns:40px 24px 64px 1fr}
+  .forecast-day__gusts{grid-column:4}
+}
 
 /* Legende oben rechts */
 .legend{

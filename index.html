@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>Wetterradar – Radar, Wolken, Wind, Warnungen</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/css/app.css?v=20260909-1">
+  <link rel="stylesheet" href="/css/app.css?v=20260919-1">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin>
   <style>
     .pegel-marker{background:transparent;border:0}
@@ -17,6 +17,12 @@
   <div id="map" role="region" aria-label="Wetterradar"></div>
   <div class="panel" id="controlPanel"><div class="panel-header"><strong>Steuerung</strong><button id="btnPanelToggle" class="panel-toggle" aria-expanded="true" aria-label="Bedienpanel einklappen">▾</button></div><div class="panel-body" id="panelBody">
     <div class="row"><button id="btnPrev">⟵</button><button id="btnPlay">▶︎</button><button id="btnNext">⟶</button><div class="grow" id="lblTime">Lade…</div><button id="btnLocate">📍</button><span id="lblLocationWind" class="badge" style="display:none"></span></div>
+    <form id="locationSearch" class="row location-search" role="search">
+      <label class="visually-hidden" for="txtLocationSearch">Ort für DWD-Prognose</label>
+      <input id="txtLocationSearch" class="grow" type="search" placeholder="Ort oder PLZ" autocomplete="off">
+      <button id="btnLocationSearch" type="submit">Prognose</button>
+      <span id="lblLocationSearch" class="hint" aria-live="polite">oder einen Ort auf der Karte anklicken</span>
+    </form>
     <div class="row"><label for="selColor">Farbschema</label><select id="selColor" disabled><option value="8" selected>Universal Blue</option></select><label for="chkSmooth">Smooth</label><input type="checkbox" id="chkSmooth" checked></div>
     <div class="row"><label for="rngSpeed">Animations-Tempo</label><input id="rngSpeed" type="range" min="200" max="1200" step="100" value="700" class="grow speed-range" aria-describedby="lblSpeed"><span id="lblSpeed" class="hint">0,7 s/Bild</span></div>
     <div class="row"><label for="rngOpacity">Deckkraft Radar</label><input id="rngOpacity" type="range" min="0.2" max="1" step="0.05" value="0.85" class="grow"><span id="lblOpacity">85%</span></div>
@@ -28,5 +34,5 @@
   </div></div>
   <div id="legend" class="legend"><div>Niederschlag (mm/h)</div><div class="scale"></div><div class="ticks"><span>Leicht</span><span>Mittel</span><span>Stark</span></div></div>
   <div id="warnList" class="warnlist" style="display:none;"><div class="warnlist-tabs" role="tablist" aria-label="Warnquellen"><button id="tabDwd" class="tab active" role="tab" aria-selected="true" aria-controls="panelDwd">DWD</button><button id="tabNina" class="tab" role="tab" aria-selected="false" aria-controls="panelNina">BBK / NINA</button></div><div id="panelDwd" class="warnlist-panel" role="tabpanel" aria-labelledby="tabDwd"><div class="title">Aktuelle Wetterwarnungen (DWD)</div><div id="warnItemsDwd"></div></div><div id="panelNina" class="warnlist-panel" role="tabpanel" aria-labelledby="tabNina" hidden><div class="title">Warnungen (BBK / NINA)</div><div id="warnItemsNina"></div></div></div>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin></script><script src="https://unpkg.com/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"></script><script type="module" src="/js/app.js?v=20260909-1"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin></script><script src="https://unpkg.com/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"></script><script type="module" src="/js/app.js?v=20260920-1"></script>
 </body></html>

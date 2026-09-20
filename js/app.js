@@ -3,8 +3,9 @@ import * as Radar from './radar.js';
 import * as Sat from './satellite.js?v=20260909-1';
 import { bind as bindWarnings } from './warnings.js';
 import { bindWindFlow } from './windflow.js';
-import { bindTemperature } from './temperature.js';
+import { bindTemperature } from './temperature.js?v=20260920-1';
 import { bindWaterLevels } from './waterlevels.js';
+import { bindForecast } from './forecast.js';
 import { bindLeafletLogging, installGlobalLogging, logger } from './logger.js';
 
 installGlobalLogging();
@@ -32,12 +33,14 @@ const ui = {
   chkClouds:$('chkClouds'), rngClouds:$('rngClouds'), lblClouds:$('lblClouds'), chkWarn:$('chkWarn'), chkWarnList:$('chkWarnList'), chkDark:$('chkDark'),
   chkWindFlow:$('chkWindFlow'), selWindRegion:$('selWindRegion'), lblWindFlowInfo:$('lblWindFlowInfo'),
   chkWaterLevels:$('chkWaterLevels'), lblWaterLevelsInfo:$('lblWaterLevelsInfo'), controlPanel:$('controlPanel'), btnPanelToggle:$('btnPanelToggle'),
+  locationSearch:$('locationSearch'), txtLocationSearch:$('txtLocationSearch'), btnLocationSearch:$('btnLocationSearch'), lblLocationSearch:$('lblLocationSearch'),
 };
 
 bindWarnings(L, map, ui);
 bindWindFlow(L, map, ui);
 bindTemperature(L, map);
 bindWaterLevels(L, map, ui);
+bindForecast(L, map, ui);
 
 if(ui.btnPanelToggle && ui.controlPanel){
   ui.btnPanelToggle.onclick = ()=>{

@@ -222,7 +222,8 @@ const switchToCityMode = async (L, map) => {
 
 const switchToLocalMode = map => {
   clearCityLayer(map);
-  scheduleLocalUpdate(map);
+  clearTimeout(localFetchTimer);
+  clearLocalLabel(map);
 };
 
 export async function updateTemperatureOverlay(L, map) {
@@ -231,7 +232,7 @@ export async function updateTemperatureOverlay(L, map) {
   const inGermany = isWithinGermany(center.lat, center.lng, 0.2);
 
   const control = ensureAttributionControl(L, map);
-  if (inGermany) {
+  if (inGermany && zoom < LOCAL_MODE_MIN_ZOOM) {
     if (!control._map) control.addTo(map);
   } else if (control._map) {
     control.remove();

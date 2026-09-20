@@ -10,6 +10,7 @@ Leichtgewichtige Wetterkarte mit Leaflet und Vanilla-JS. Die öffentliche Instan
 - **Warnungen:** DWD sowie BBK/NINA.
 - **Pegelstände:** PEGELONLINE / WSV.
 - **Standort:** Geolokalisierung plus aktuelle Windinformation von Open-Meteo.
+- **Punktprognose:** Fünf Tage DWD ICON für einen gesuchten oder auf der Karte angeklickten Ort. Die Prognose wird nur nach dieser ausdrücklichen Auswahl geladen und 15 Minuten je Koordinate zwischengespeichert.
 - **Darstellung:** helle/dunkle Grundkarte, Radar- und Satelliten-Deckkraft, Zeitsteuerung.
 
 ## Datenquellen
@@ -18,6 +19,7 @@ Leichtgewichtige Wetterkarte mit Leaflet und Vanilla-JS. Die öffentliche Instan
 - EUMETSAT EUMETView – Satellitenbild
 - NOAA/NCEP GFS via NOMADS – serverseitig erzeugtes Wind-Vektorfeld
 - Open-Meteo – punktuelle Windinformation am gewählten Standort
+- DWD ICON Global/EU/D2 via Open-Meteo – punktuelle Wetterprognose
 - DWD – amtliche Wetterwarnungen
 - BBK/NINA – Bevölkerungsschutz-Warnungen
 - PEGELONLINE / WSV – Pegelstände
@@ -128,6 +130,8 @@ npm test
 ```
 
 Die Tests decken unter anderem Radar-Laden, EUMETView-Zeitachsen, Wind-Cropping, Dataset-Versionen und Request-Timeouts ab. GitHub Actions führt die Tests bei Pull Requests und auf `fix/**`-Branches aus.
+
+Die DWD-Prognose erzeugt keine Requests beim Starten oder Verschieben der Karte. Erst eine Ortssuche oder ein Klick auf die freie Kartenfläche startet genau eine Koordinatenabfrage. Wiederholte Abfragen derselben gerundeten Koordinate verwenden für 15 Minuten den Sitzungscache im Browser.
 
 ## Unterstützung
 
